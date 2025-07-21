@@ -20,7 +20,7 @@ export class InstagramBot {
     const password = config.instagram.password;
 
     if (!username || !password) {
-      throw new Error('❌ Instagram credentials are not set. Please check your config or environment variables.');
+      throw new Error('❌ Instagram credentials are missing. Set INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD in your environment.');
     }
 
     this.ig.state.generateDevice(username);
@@ -51,6 +51,7 @@ export class InstagramBot {
     throw error;
   }
 }
+
 
 
   async loadSession() {
