@@ -10,7 +10,7 @@ class InstagramUserBot {
   constructor() {
     this.instagramBot = new InstagramBot();
     this.telegramBridge = new TelegramBridge();
-    this.pluginManager = new PluginManager();
+    this.pluginManager = new PluginManager(this.instagramBot);
   }
 
   async initialize() {

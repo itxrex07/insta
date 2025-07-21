@@ -1,17 +1,30 @@
 import { AutoReplyPlugin } from './AutoReplyPlugin.js';
 import { MessageFilterPlugin } from './MessageFilterPlugin.js';
 import { MessageLoggerPlugin } from './MessageLoggerPlugin.js';
+import { CorePlugin } from './CorePlugin.js';
+import { HelpPlugin } from './HelpPlugin.js';
 import { logger } from '../utils.js';
 import { config } from '../config.js';
 
 export class PluginManager {
-  constructor() {
+  constructor(instagramBot = null) {
     this.plugins = [];
+    this.instagramBot = instagramBot;
   }
 
   async loadPlugins() {
     try {
       logger.info('🔌 Loading plugins...');
+
+      // Load Core plugin first (always enabled)
+      const corePlugin = new CorePlugin(this.instagramBot);
+      this.plugins.push(corePlugin);
+      logger.info('✅ Core plugin loaded');
+
+      // Load Help plugin (always enabled)
+      const helpPlugin = new HelpPlugin(this);
+      this.plugins.push(helpPlugin);
+      logger.info('✅ Help plugin loaded');
 
       // Load AutoReply plugin
       if (config.plugins.autoReply.enabled) {
@@ -61,7 +74,12 @@ export class PluginManager {
   }
 
   getPlugin(name) {
-    return this.plugins.find(plugin => plugin.constructor.name === name);
+    return this.plugins.find(plugin => 
+      plugin.constructor.name === name || 
+      plugin.name === name ||
+      plugin.constructor.name.toLowerCase() === name.toLowerCase() ||
+      (plugin.name && plugin.name.toLowerCase() === name.toLowerCase())
+    );
   }
 
   async unloadPlugins() {
