@@ -10,231 +10,155 @@ export class InstagramBot {
     this.mediaHandlers = [];
     this.sessionPath = config.instagram.sessionPath;
     this.isRunning = false;
+    this.lastMessageCheck = new Date();
   }
 
-async login() {
-  const MAX_LOGIN_ATTEMPTS = 3;
-  let attemptCount = 0;
-  const username = config.instagram.username;
-  const password = config.instagram.password;
+  async login() {
+    const username = config.instagram.username;
+    const password = config.instagram.password;
 
-  if (!username || !password) {
-    throw new Error('❌ Instagram credentials are missing in config');
-  }
-
-  // Generate device state
-  this.ig.state.generateDevice(username);
-  this.ig.request.end$.subscribe(this.saveSession.bind(this));
-
-  while (attemptCount < MAX_LOGIN_ATTEMPTS) {
-    attemptCount++;
-    logger.info(`🔐 Login attempt ${attemptCount}/${MAX_LOGIN_ATTEMPTS}`);
+    if (!username || !password) {
+      throw new Error('❌ Instagram credentials are missing in config');
+    }
 
     try {
-      // Try existing session first
+      // Generate device and set user agent
+      this.ig.state.generateDevice(username);
+      
+      // Set additional headers to mimic real device
+      this.ig.request.defaults.headers = {
+        'User-Agent': this.ig.state.appUserAgent,
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'X-IG-App-Locale': 'en_US',
+        'X-IG-Device-Locale': 'en_US',
+        'X-IG-Mapped-Locale': 'en_US',
+        'X-Pigeon-Session-Id': this.ig.state.pigeonSessionId,
+        'X-Pigeon-Rawclienttime': (Date.now() / 1000).toFixed(3),
+        'X-IG-Bandwidth-Speed-KBPS': '-1.000',
+        'X-IG-Bandwidth-TotalBytes-B': '0',
+        'X-IG-Bandwidth-TotalTime-MS': '0',
+        'X-IG-App-Startup-Country': 'US',
+        'X-Bloks-Version-Id': this.ig.state.bloksVersionId,
+        'X-IG-WWW-Claim': '0',
+        'X-Bloks-Is-Layout-RTL': 'false',
+        'X-Bloks-Is-Panorama-Enabled': 'true',
+        'X-IG-Device-ID': this.ig.state.uuid,
+        'X-IG-Family-Device-ID': this.ig.state.deviceId,
+        'X-IG-Android-ID': this.ig.state.androidId,
+        'X-IG-Timezone-Offset': '0',
+        'X-IG-Connection-Type': 'WIFI',
+        'X-IG-Capabilities': '3brTvwM=',
+        'X-IG-App-ID': '567067343352427',
+        'Priority': 'u=3',
+        'X-FB-HTTP-Engine': 'Liger'
+      };
+
+      // Try to load existing session first
       if (await this.loadSession()) {
         try {
-          await this.ig.account.currentUser();
-          logger.info('✅ Logged in with existing session');
+          const user = await this.ig.account.currentUser();
+          logger.info(`✅ Logged in with existing session as @${user.username}`);
           this.startMessageListener();
-          return true;
-        } catch (sessionError) {
-          logger.warn('⚠️ Session expired:', sessionError.message);
-          await fileUtils.deleteFile(this.sessionPath);
+          return;
+        } catch (error) {
+          logger.warn('⚠️ Existing session invalid, logging in with credentials...');
         }
       }
 
-      // New login flow
-      logger.info('🔄 Attempting new login...');
+      // Simulate pre-login flow
+      logger.info('🔄 Simulating pre-login flow...');
       await this.ig.simulate.preLoginFlow();
       
-      // Main login attempt
-      const loggedInUser = await this.ig.account.login(username, password);
+      // Add delay to avoid rate limiting
+      await this.delay(2000);
+
+      // Perform login
+      logger.info('🔐 Attempting login...');
+      const loginResult = await this.ig.account.login(username, password);
+      
+      // Simulate post-login flow
       await this.ig.simulate.postLoginFlow();
-
-      // Check if login was successful but needs challenge
-      if (loggedInUser.status === 'ok' && loggedInUser.requires_challenge) {
-        logger.warn('⚠️ Challenge required after login');
-        const challengeHandled = await this.handleChallenge();
-        if (!challengeHandled) throw new Error('Challenge resolution failed');
-      }
-
+      
+      // Save session
       await this.saveSession();
-      logger.info(`✅ Successfully logged in as @${loggedInUser.username}`);
+      
+      logger.info(`✅ Successfully logged in as @${loginResult.username}`);
       this.startMessageListener();
-      return true;
 
     } catch (error) {
-      logger.error(`❌ Login attempt ${attemptCount} failed:`, error.message);
-
-      // Handle specific error cases
-      switch (error.name) {
-        case 'IgCheckpointError':
-          logger.warn('⚠️ Checkpoint challenge required');
-          try {
-            if (await this.handleChallenge()) {
-              await this.saveSession();
-              this.startMessageListener();
-              return true;
-            }
-          } catch (challengeError) {
-            logger.error('❌ Challenge handling failed:', challengeError.message);
-          }
-          break;
-
-        case 'IgLoginTwoFactorRequiredError':
-          logger.warn('⚠️ Two-factor authentication required');
-          try {
-            if (await this.handleTwoFactor(error.response.body.two_factor_info)) {
-              await this.saveSession();
-              this.startMessageListener();
-              return true;
-            }
-          } catch (twoFactorError) {
-            logger.error('❌ 2FA failed:', twoFactorError.message);
-          }
-          break;
-
-        case 'IgSentryBlockError':
-          logger.error('🚫 Account temporarily blocked by Instagram');
-          logger.info('ℹ️ Wait 24-48 hours before retrying');
-          throw error;
-
-        case 'IgActionSpamError':
-          logger.error('⚠️ Login attempt flagged as spam');
-          logger.info('ℹ️ Change network/IP and try again later');
-          throw error;
+      logger.error('❌ Instagram login failed:', error.message);
+      
+      // Handle specific error types
+      if (error.name === 'IgCheckpointError') {
+        logger.error('🚫 Account requires verification. Please verify your account manually.');
+        logger.info('💡 Try logging in through the Instagram app first, then restart the bot.');
+      } else if (error.name === 'IgLoginTwoFactorRequiredError') {
+        logger.error('🔐 Two-factor authentication required. Please disable 2FA temporarily.');
+      } else if (error.name === 'IgSentryBlockError') {
+        logger.error('🚫 Account temporarily blocked. Wait 24-48 hours before retrying.');
+      } else if (error.message.includes('challenge_required')) {
+        logger.error('🚫 Challenge required. Please verify your account manually.');
+      } else if (error.message.includes('rate_limit')) {
+        logger.error('⚠️ Rate limited. Please wait and try again later.');
+      } else if (error.message.includes('Invalid parameters')) {
+        logger.error('❌ Invalid username or password. Please check your credentials.');
       }
-
-      // Exponential backoff between attempts
-      if (attemptCount < MAX_LOGIN_ATTEMPTS) {
-        const waitTime = Math.pow(2, attemptCount) * 1000;
-        logger.info(`⏳ Waiting ${waitTime/1000}s before next attempt...`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      }
+      
+      throw error;
     }
   }
 
-  throw new Error(`Failed to login after ${MAX_LOGIN_ATTEMPTS} attempts`);
-}
-
-async handleChallenge() {
-  try {
-    const challengeState = await this.ig.challenge.state();
-    logger.debug('Challenge state:', JSON.stringify(challengeState, null, 2));
-
-    // Handle verification method selection
-    if (challengeState.step_name === 'SELECT_VERIFICATION_METHOD') {
-      logger.info('📧 Selecting verification method...');
-      
-      // Try email first, then SMS
-      const methods = await this.ig.challenge.selectVerifyMethod('0').catch(() => 
-        this.ig.challenge.selectVerifyMethod('1')
-      );
-      
-      logger.info(`📩 Selected method: ${methods.step_name}`);
-    }
-
-    // Handle web challenge
-    if (challengeState.step_name === 'CHALLENGE_STEP_WEBVIEW') {
-      const webUrl = challengeState.web_url || challengeState.url;
-      logger.info('🌐 Web challenge detected');
-      logger.info(`🔗 Complete verification at: https://instagram.com${webUrl}`);
-      logger.info('ℹ️ After completing, restart the bot');
-      throw new Error('Manual web verification required');
-    }
-
-    // Handle code entry
-    if (challengeState.step_name === 'CHALLENGE_STEP_CODE') {
-      const { code } = await this.promptForCode();
-      logger.info('🔐 Submitting verification code...');
-      
-      const result = await this.ig.challenge.sendSecurityCode(code);
-      if (result.status === 'ok' || result.logged_in_user) {
-        logger.info('✅ Challenge verification successful');
-        return true;
-      }
-      throw new Error('Invalid verification code');
-    }
-
-    throw new Error(`Unsupported challenge step: ${challengeState.step_name}`);
-  } catch (error) {
-    logger.error('❌ Challenge handling failed:', error.message);
-    throw error;
-  }
-}
-
-async handleTwoFactor(twoFactorInfo) {
-  try {
-    logger.info('🔐 Two-factor authentication required');
-    const { code } = await this.promptForTwoFactorCode();
-    
-    const result = await this.ig.account.twoFactorLogin({
-      username: config.instagram.username,
-      verificationCode: code,
-      twoFactorIdentifier: twoFactorInfo.two_factor_identifier,
-      verificationMethod: twoFactorInfo.totp_two_factor_on ? '0' : '1', // 0=TOTP, 1=SMS
-      trustThisDevice: '1',
-      deviceId: this.ig.state.deviceId
-    });
-
-    if (result.status === 'ok') {
-      logger.info('✅ 2FA verification successful');
-      return true;
-    }
-    throw new Error('2FA verification failed');
-  } catch (error) {
-    logger.error('❌ 2FA handling failed:', error.message);
-    throw error;
-  }
-}
-
-async loadSession() {
-  try {
-    if (await fileUtils.pathExists(this.sessionPath)) {
-      const sessionData = await fileUtils.readJson(this.sessionPath);
-      if (sessionData) {
-        await this.ig.state.deserialize(sessionData);
-        
-        // Validate device state
-        if (!this.ig.state.deviceId || !this.ig.state.uuid) {
-          this.ig.state.generateDevice(config.instagram.username);
+  async loadSession() {
+    try {
+      if (await fileUtils.pathExists(this.sessionPath)) {
+        const sessionData = await fileUtils.readJson(this.sessionPath);
+        if (sessionData && sessionData.cookies) {
+          await this.ig.state.deserialize(sessionData);
+          return true;
         }
-        
-        logger.info('📱 Loaded existing session');
-        return true;
       }
+    } catch (error) {
+      logger.warn('⚠️ Failed to load session:', error.message);
     }
     return false;
-  } catch (error) {
-    logger.warn('⚠️ Session load failed:', error.message);
-    return false;
   }
-}
 
-async saveSession() {
-  try {
-    const serialized = await this.ig.state.serialize();
-    delete serialized.constants; // Remove unnecessary data
-    await fileUtils.writeJson(this.sessionPath, serialized);
-    logger.debug('💾 Session saved');
-  } catch (error) {
-    logger.warn('⚠️ Session save failed:', error.message);
+  async saveSession() {
+    try {
+      const serialized = await this.ig.state.serialize();
+      delete serialized.constants; // Remove unnecessary data
+      await fileUtils.writeJson(this.sessionPath, serialized);
+      logger.info('💾 Session saved successfully');
+    } catch (error) {
+      logger.warn('⚠️ Failed to save session:', error.message);
+    }
   }
-}
+
   startMessageListener() {
     if (this.isRunning) return;
     
     this.isRunning = true;
     logger.info('👂 Started message listener');
     
-    // Check for messages periodically
+    // Check for messages every 10 seconds to avoid rate limiting
     setInterval(async () => {
       if (this.isRunning) {
         try {
           await this.checkForNewMessages();
         } catch (error) {
-          logger.error('Error checking messages:', error);
+          logger.error('❌ Error checking messages:', error.message);
+          
+          // If session expired, try to re-login
+          if (error.message.includes('login_required') || error.message.includes('401')) {
+            logger.warn('🔄 Session expired, attempting re-login...');
+            try {
+              await this.login();
+            } catch (loginError) {
+              logger.error('❌ Re-login failed:', loginError.message);
+            }
+          }
         }
       }
     }, config.instagram.messageCheckInterval);
@@ -242,61 +166,107 @@ async saveSession() {
 
   async checkForNewMessages() {
     try {
-      const inbox = await this.ig.feed.directInbox().items();
+      // Get direct inbox
+      const inboxFeed = this.ig.feed.directInbox();
+      const inbox = await inboxFeed.items();
       
-      for (const thread of inbox) {
-        const messages = await this.ig.feed.directThread({
-          thread_id: thread.thread_id
-        }).items();
-        
-        // Only check the latest message
-        for (const message of messages.slice(0, 1)) {
-          if (this.isNewMessage(message)) {
-            await this.handleMessage(message, thread);
-          }
+      if (!inbox || inbox.length === 0) {
+        logger.debug('📭 No messages in inbox');
+        return;
+      }
+
+      // Check each thread for new messages
+      for (const thread of inbox.slice(0, 5)) { // Limit to first 5 threads to avoid rate limiting
+        try {
+          await this.checkThreadMessages(thread);
+          await this.delay(1000); // Delay between thread checks
+        } catch (error) {
+          logger.error(`❌ Error checking thread ${thread.thread_id}:`, error.message);
         }
       }
+
     } catch (error) {
-      logger.error('Error fetching messages:', error);
+      logger.error('❌ Error fetching inbox:', error.message);
+      throw error;
+    }
+  }
+
+  async checkThreadMessages(thread) {
+    try {
+      const threadFeed = this.ig.feed.directThread({
+        thread_id: thread.thread_id
+      });
+      
+      const messages = await threadFeed.items();
+      
+      if (!messages || messages.length === 0) return;
+
+      // Check only the latest message to avoid processing old messages
+      const latestMessage = messages[0];
+      
+      if (this.isNewMessage(latestMessage)) {
+        await this.handleMessage(latestMessage, thread);
+      }
+
+    } catch (error) {
+      logger.error(`❌ Error fetching thread messages:`, error.message);
     }
   }
 
   isNewMessage(message) {
-    // Simple check - in production, you'd track processed message IDs
-    const messageAge = Date.now() - (message.timestamp / 1000);
-    return messageAge < 10000; // Messages newer than 10 seconds
+    // Check if message is newer than our last check
+    const messageTime = new Date(message.timestamp / 1000);
+    const isNew = messageTime > this.lastMessageCheck;
+    
+    if (isNew) {
+      this.lastMessageCheck = messageTime;
+    }
+    
+    return isNew;
   }
 
   async handleMessage(message, thread) {
-    const processedMessage = {
-      id: message.item_id,
-      text: message.text || '',
-      sender: message.user_id,
-      senderUsername: thread.users.find(u => u.pk === message.user_id)?.username || 'Unknown',
-      timestamp: new Date(message.timestamp / 1000),
-      threadId: thread.thread_id,
-      threadTitle: thread.thread_title || 'Direct Message',
-      type: message.item_type,
-      shouldForward: true
-    };
-
-    // Handle media messages
-    if (message.media) {
-      processedMessage.media = {
-        type: message.media.media_type === 1 ? 'photo' : 'video',
-        url: message.media.image_versions2?.candidates?.[0]?.url || 
-             message.media.video_versions?.[0]?.url
-      };
+    try {
+      // Get sender info
+      const sender = thread.users.find(u => u.pk.toString() === message.user_id.toString());
       
-      // Notify media handlers
-      for (const handler of this.mediaHandlers) {
+      const processedMessage = {
+        id: message.item_id,
+        text: message.text || '',
+        sender: message.user_id,
+        senderUsername: sender?.username || 'Unknown',
+        timestamp: new Date(message.timestamp / 1000),
+        threadId: thread.thread_id,
+        threadTitle: thread.thread_title || 'Direct Message',
+        type: message.item_type,
+        shouldForward: true
+      };
+
+      // Handle media messages
+      if (message.media) {
+        processedMessage.media = {
+          type: message.media.media_type === 1 ? 'photo' : 'video',
+          url: message.media.image_versions2?.candidates?.[0]?.url || 
+               message.media.video_versions?.[0]?.url
+        };
+        
+        logger.info(`📸 Received ${processedMessage.media.type} from @${processedMessage.senderUsername}`);
+        
+        // Notify media handlers
+        for (const handler of this.mediaHandlers) {
+          await handler(processedMessage);
+        }
+      }
+
+      logger.info(`💬 New message from @${processedMessage.senderUsername}: ${processedMessage.text}`);
+
+      // Notify message handlers
+      for (const handler of this.messageHandlers) {
         await handler(processedMessage);
       }
-    }
 
-    // Notify message handlers
-    for (const handler of this.messageHandlers) {
-      await handler(processedMessage);
+    } catch (error) {
+      logger.error('❌ Error handling message:', error.message);
     }
   }
 
@@ -311,10 +281,15 @@ async saveSession() {
   async sendMessage(threadId, text) {
     try {
       await this.ig.entity.directThread(threadId).broadcastText(text);
-      logger.info(`📤 Sent message to thread ${threadId}`);
+      logger.info(`📤 Sent message to thread ${threadId}: ${text}`);
     } catch (error) {
-      logger.error('Error sending message:', error);
+      logger.error('❌ Error sending message:', error.message);
+      throw error;
     }
+  }
+
+  async delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   async disconnect() {

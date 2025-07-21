@@ -3,7 +3,7 @@ export const config = {
     username: process.env.INSTAGRAM_USERNAME,
     password: process.env.INSTAGRAM_PASSWORD,
     sessionPath: './session/instagram_session.json',
-    messageCheckInterval: 5000, // Check for messages every 5 seconds
+    messageCheckInterval: 10000, // Check for messages every 10 seconds (reduced to avoid rate limiting)
     maxRetries: 3
   },
   
