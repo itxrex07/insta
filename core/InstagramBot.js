@@ -46,55 +46,61 @@ async login() {
       this.startMessageListener();
     } catch (error) {
       if (error.name === 'IgCheckpointError') {
-        logger.warn('⚠️ Challenge required. Attempting manual resolution...');
-        logger.info('🔗 Challenge URL:', error.checkpoint_url || 'Not available');
-
-        try {
-          // Method 1: Try to get challenge state directly
-          let challengeState = null;
+        logger.warn('⚠️ Challenge required. Attempting resolution...');
+        
+        // Get challenge state
+        const challengeState = await this.ig.challenge.state();
+        logger.debug('Challenge state:', JSON.stringify(challengeState, null, 2));
+        
+        // Handle different challenge types
+        if (challengeState.step_name === 'SELECT_VERIFICATION_METHOD') {
+          logger.info('📧 Verification method selection required');
+          
+          // Try selecting email verification
           try {
-            challengeState = await this.ig.challenge.state();
-            logger.info('📋 Challenge state retrieved successfully');
-          } catch (stateError) {
-            logger.warn('⚠️ Could not get challenge state:', stateError.message);
+            await this.ig.challenge.selectVerifyMethod('0'); // 0 = email
+            logger.info('📩 Email verification selected');
+          } catch {
+            try {
+              await this.ig.challenge.selectVerifyMethod('1'); // 1 = SMS
+              logger.info('📱 SMS verification selected');
+            } catch (selectError) {
+              logger.error('❌ Could not select verification method:', selectError);
+              throw new Error('Verification method selection failed');
+            }
           }
 
-          if (challengeState && challengeState.step_name) {
-            logger.info(`📧 Challenge step: ${challengeState.step_name}`);
-            
-            // Try to select email verification
-            try {
-              await this.ig.challenge.selectVerifyMethod('0'); // 0 = email
-              logger.info('📩 Email verification selected');
-            } catch (selectError) {
-              logger.warn('⚠️ Could not select email method, trying phone...');
-              await this.ig.challenge.selectVerifyMethod('1'); // 1 = phone
-              logger.info('📱 Phone verification selected');
-            }
-          } else {
-            // Method 2: Try auto challenge resolution
-            logger.info('🔄 Trying auto challenge resolution...');
-            try {
-              const autoResult = await this.ig.challenge.auto(true);
-              if (autoResult) {
-                logger.info('📧 Auto challenge initiated');
-              } else {
-                throw new Error('Auto challenge returned null');
-              }
-            } catch (autoError) {
-              logger.error('❌ Auto challenge failed:', autoError.message);
-              
-              // Method 3: Manual challenge URL approach
-              if (error.checkpoint_url) {
-                logger.info('🌐 Please visit this URL to complete the challenge:');
-                logger.info(error.checkpoint_url);
-                logger.info('📝 After completing the web challenge, restart the bot');
-                throw new Error('Manual challenge completion required via web interface');
-              } else {
-                throw new Error('No challenge resolution method available');
-              }
-            }
+          // Prompt for code
+          const { code } = await this.promptForCode();
+          logger.info('🔐 Verifying code...');
+          
+          // Send verification code
+          const result = await this.ig.challenge.sendSecurityCode(code);
+          if (result.status === 'ok') {
+            await this.saveSession();
+            logger.info('✅ Challenge resolved successfully');
+            this.startMessageListener();
+            return;
           }
+        }
+        
+        // Handle web-based challenges
+        if (challengeState.webUrl) {
+          logger.info('🌐 Web-based challenge detected');
+          logger.info(`🔗 Challenge URL: https://instagram.com${challengeState.webUrl}`);
+          logger.info('ℹ️ Complete verification in browser then restart bot');
+          throw new Error('Manual web verification required');
+        }
+        
+        throw new Error('Unsupported challenge type');
+      }
+      // ... handle other errors ...
+    }
+  } catch (error) {
+    logger.error('❌ Login failed:', error.message);
+    throw error;
+  }
+}
 
           // Prompt for verification code
           const { code } = await this.promptForCode();
