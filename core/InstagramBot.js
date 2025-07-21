@@ -49,19 +49,74 @@ async login() {
         logger.warn('⚠️ Challenge required. Attempting manual resolution...');
 
         try {
-          await this.ig.challenge.state(); // force fetch challenge data
-          await this.ig.challenge.selectVerifyMethod('0'); // '0' = email, '1' = phone
+          // First, get the challenge info
+          const challenge = await this.ig.challenge.auto(false);
+          logger.info(`📧 Challenge step name: ${challenge.step_name}`);
+          logger.info(`📱 Available methods: ${challenge.step_data?.choice || 'email/phone'}`);
+          
+          // Select verification method (0 = email, 1 = phone)
+          await this.ig.challenge.selectVerifyMethod('0'); // Email verification
+          logger.info('📩 Verification code sent to your email');
+          
           const { code } = await this.promptForCode();
-          await this.ig.challenge.sendSecurityCode(code);
-
-          await this.saveSession();
-          logger.info('✅ Successfully verified challenge and logged in.');
-          this.startMessageListener();
+          const result = await this.ig.challenge.sendSecurityCode(code);
+          
+          if (result.logged_in_user) {
+            await this.saveSession();
+            logger.info('✅ Successfully verified challenge and logged in.');
+            this.startMessageListener();
+          } else {
+            throw new Error('Challenge verification failed');
+          }
+          
         } catch (challengeError) {
           logger.error('❌ Challenge resolution failed:', challengeError.message);
-          throw challengeError;
+          
+          // If challenge fails, try alternative approach
+          if (challengeError.message.includes('No checkpoint data')) {
+            logger.info('🔄 Trying alternative challenge approach...');
+            try {
+              // Reset and try again
+              await this.ig.challenge.reset();
+              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+              
+              const challenge = await this.ig.challenge.auto(true); // Auto-select method
+              const { code } = await this.promptForCode();
+              await this.ig.challenge.sendSecurityCode(code);
+              
+              await this.saveSession();
+              logger.info('✅ Successfully verified challenge with alternative method.');
+              this.startMessageListener();
+            } catch (altError) {
+              logger.error('❌ Alternative challenge method also failed:', altError.message);
+              throw altError;
+            }
+          } else {
+            throw challengeError;
+          }
         }
 
+      } else if (error.name === 'IgLoginTwoFactorRequiredError') {
+        logger.warn('⚠️ Two-factor authentication required');
+        try {
+          const { code } = await this.promptForTwoFactorCode();
+          const result = await this.ig.account.twoFactorLogin({
+            username,
+            verificationCode: code,
+            twoFactorIdentifier: error.response.body.two_factor_info.two_factor_identifier,
+            verificationMethod: '1', // '1' = SMS, '0' = authenticator app
+            trustThisDevice: '1'
+          });
+          
+          if (result) {
+            await this.saveSession();
+            logger.info('✅ Successfully logged in with 2FA');
+            this.startMessageListener();
+          }
+        } catch (twoFactorError) {
+          logger.error('❌ 2FA verification failed:', twoFactorError.message);
+          throw twoFactorError;
+        }
       } else {
         logger.error('❌ Instagram login failed:', error.message);
         throw error;
@@ -81,13 +136,26 @@ promptForCode() {
       output: process.stdout
     });
 
-    rl.question('📩 Enter the 6-digit Instagram code sent to your email or phone: ', (code) => {
+    rl.question('📩 Enter the 6-digit Instagram verification code: ', (code) => {
       rl.close();
       resolve({ code });
     });
   });
 }
 
+promptForTwoFactorCode() {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    rl.question('🔐 Enter your 6-digit 2FA code: ', (code) => {
+      rl.close();
+      resolve({ code });
+    });
+  });
+}
   async loadSession() {
     try {
       if (await fileUtils.pathExists(this.sessionPath)) {
