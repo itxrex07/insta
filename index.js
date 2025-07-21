@@ -1,21 +1,21 @@
 import dotenv from 'dotenv';
 import { InstagramBot } from './core/InstagramBot.js';
 import { TelegramBridge } from './bridge/TelegramBridge.js';
-import { PluginManager } from './plugins/PluginManager.js';
+import { ModuleManager } from './modules/ModuleManager.js';
 import { logger } from './utils.js';
 
 dotenv.config();
 
-class InstagramUserBot {
+class HyperInsta {
   constructor() {
     this.instagramBot = new InstagramBot();
     this.telegramBridge = new TelegramBridge();
-    this.pluginManager = new PluginManager(this.instagramBot);
+    this.moduleManager = new ModuleManager(this.instagramBot, this.telegramBridge);
   }
 
   async initialize() {
     try {
-      logger.info('🚀 Starting Instagram UserBot...');
+      logger.info('🚀 Starting Hyper Insta...');
       
       // Initialize Instagram connection
       await this.instagramBot.login();
@@ -23,16 +23,16 @@ class InstagramUserBot {
       // Initialize Telegram bridge
       await this.telegramBridge.initialize();
       
-      // Load plugins
-      await this.pluginManager.loadPlugins();
+      // Load modules
+      await this.moduleManager.loadModules();
       
       // Set up message handlers
       this.setupMessageHandlers();
       
-      logger.info('✅ Instagram UserBot initialized successfully!');
+      logger.info('✅ Hyper Insta initialized successfully!');
       
     } catch (error) {
-      logger.error('❌ Failed to initialize bot:', error);
+      logger.error('❌ Failed to initialize Hyper Insta:', error);
       process.exit(1);
     }
   }
@@ -41,8 +41,8 @@ class InstagramUserBot {
     // Handle incoming Instagram messages
     this.instagramBot.onMessage(async (message) => {
       try {
-        // Process through plugins
-        const processedMessage = await this.pluginManager.processMessage(message);
+        // Process through modules
+        const processedMessage = await this.moduleManager.processMessage(message);
         
         // Forward to Telegram if enabled
         if (processedMessage.shouldForward) {
@@ -50,6 +50,19 @@ class InstagramUserBot {
         }
       } catch (error) {
         logger.error('Error processing message:', error);
+      }
+    });
+
+    // Handle Telegram replies (bidirectional)
+    this.telegramBridge.onMessage(async (reply) => {
+      try {
+        if (reply.type === 'telegram_reply') {
+          // Send reply back to Instagram
+          await this.instagramBot.sendMessage(reply.threadId, reply.text);
+          logger.info(`📱⬅️📱 Sent Telegram reply to @${reply.originalSender}: ${reply.text}`);
+        }
+      } catch (error) {
+        logger.error('Error handling Telegram reply:', error);
       }
     });
 
@@ -68,16 +81,16 @@ class InstagramUserBot {
     
     // Keep the bot running
     process.on('SIGINT', async () => {
-      logger.info('🛑 Shutting down bot...');
+      logger.info('🛑 Shutting down Hyper Insta...');
       await this.instagramBot.disconnect();
-      await this.pluginManager.unloadPlugins();
+      await this.moduleManager.unloadModules();
       process.exit(0);
     });
 
-    logger.info('🤖 Bot is running... Press Ctrl+C to stop');
+    logger.info('🚀 Hyper Insta is running... Press Ctrl+C to stop');
   }
 }
 
-// Start the bot
-const bot = new InstagramUserBot();
+// Start Hyper Insta
+const bot = new HyperInsta();
 bot.start().catch(console.error);

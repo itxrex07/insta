@@ -1,14 +1,14 @@
 {
-  "name": "instagram-userbot",
+  "name": "hyper-insta",
   "version": "1.0.0",
-  "description": "Instagram UserBot with Telegram integration and plugin system",
+  "description": "Hyper Insta - Advanced Instagram Bot with Telegram integration and modular system",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js"
   },
-  "keywords": ["instagram", "bot", "telegram", "userbot", "automation"],
+  "keywords": ["instagram", "bot", "telegram", "hyper-insta", "automation", "modules"],
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
@@ -16,6 +16,7 @@
     "node-telegram-bot-api": "^0.64.0",
     "fs-extra": "^11.1.1",
     "axios": "^1.6.0",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "tough-cookie": "^4.1.3"
   }
 }

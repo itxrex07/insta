@@ -3,47 +3,47 @@ import { config } from '../config.js';
 import os from 'os';
 import fs from 'fs';
 
-export class CorePlugin {
+export class CoreModule {
   constructor(instagramBot) {
     this.name = 'Core';
     this.instagramBot = instagramBot;
     this.startTime = new Date();
-    this.commandPrefix = '!';
+    this.commandPrefix = '.';
     this.commands = {
       'ping': {
-        description: 'Check if bot is responsive',
-        usage: '!ping',
+        description: 'Check if Hyper Insta is responsive',
+        usage: '.ping',
         handler: this.handlePing.bind(this)
       },
       'status': {
         description: 'Show bot status and system information',
-        usage: '!status',
+        usage: '.status',
         handler: this.handleStatus.bind(this)
       },
       'uptime': {
-        description: 'Show how long the bot has been running',
-        usage: '!uptime',
+        description: 'Show how long Hyper Insta has been running',
+        usage: '.uptime',
         handler: this.handleUptime.bind(this)
       },
       'logs': {
         description: 'Show recent bot logs',
-        usage: '!logs [count]',
+        usage: '.logs [count]',
         handler: this.handleLogs.bind(this)
       },
       'info': {
-        description: 'Show bot information',
-        usage: '!info',
+        description: 'Show Hyper Insta information',
+        usage: '.info',
         handler: this.handleInfo.bind(this)
       },
       'restart': {
-        description: 'Restart the bot (admin only)',
-        usage: '!restart',
+        description: 'Restart Hyper Insta (admin only)',
+        usage: '.restart',
         handler: this.handleRestart.bind(this),
         adminOnly: true
       },
       'stats': {
-        description: 'Show bot statistics',
-        usage: '!stats',
+        description: 'Show Hyper Insta statistics',
+        usage: '.stats',
         handler: this.handleStats.bind(this)
       }
     };
@@ -73,7 +73,7 @@ export class CorePlugin {
       this.addToLogBuffer(`[${message.timestamp.toISOString()}] @${message.senderUsername}: ${message.text || '[Media]'}`);
 
     } catch (error) {
-      logger.error('Error in Core plugin:', error);
+      logger.error('Error in Core module:', error);
     }
 
     return message;
@@ -100,7 +100,7 @@ export class CorePlugin {
 
   async handlePing(args, message) {
     const startTime = Date.now();
-    await this.sendReply(message, '🏓 Pong!');
+    await this.sendReply(message, '🚀 Hyper Insta is online and ready!');
     const responseTime = Date.now() - startTime;
     logger.info(`📊 Ping response time: ${responseTime}ms`);
   }
@@ -117,8 +117,8 @@ export class CorePlugin {
       cpuCount: os.cpus().length
     };
 
-    const statusMessage = `🤖 **Bot Status**\n\n` +
-      `✅ Status: Online\n` +
+    const statusMessage = `🚀 **Hyper Insta Status**\n\n` +
+      `✅ Status: Online & Active\n` +
       `⏱️ Uptime: ${uptime}\n` +
       `📊 Messages Processed: ${this.messageCount}\n` +
       `🎯 Commands Executed: ${this.commandCount}\n` +
@@ -134,7 +134,7 @@ export class CorePlugin {
 
   async handleUptime(args, message) {
     const uptime = this.getUptime();
-    await this.sendReply(message, `⏱️ Bot uptime: ${uptime}`);
+    await this.sendReply(message, `⏱️ Hyper Insta uptime: ${uptime}`);
   }
 
   async handleLogs(args, message) {
@@ -156,11 +156,11 @@ export class CorePlugin {
   async handleInfo(args, message) {
     const packageInfo = await this.getPackageInfo();
     
-    const infoMessage = `ℹ️ **Bot Information**\n\n` +
-      `📱 Name: ${packageInfo.name || 'Instagram UserBot'}\n` +
+    const infoMessage = `🚀 **Hyper Insta Information**\n\n` +
+      `📱 Name: ${packageInfo.name || 'Hyper Insta'}\n` +
       `🔢 Version: ${packageInfo.version || '1.0.0'}\n` +
-      `👨‍💻 Author: ${packageInfo.author || 'Unknown'}\n` +
-      `📄 Description: ${packageInfo.description || 'Instagram UserBot with plugin system'}\n` +
+      `👨‍💻 Author: ${packageInfo.author || 'Hyper Team'}\n` +
+      `📄 Description: ${packageInfo.description || 'Advanced Instagram Bot with modular system'}\n` +
       `🚀 Started: ${this.startTime.toLocaleString()}\n` +
       `🔧 Prefix: ${this.commandPrefix}\n` +
       `🎯 Available Commands: ${Object.keys(this.commands).length}`;
@@ -169,8 +169,8 @@ export class CorePlugin {
   }
 
   async handleRestart(args, message) {
-    await this.sendReply(message, '🔄 Restarting bot...');
-    logger.info('🔄 Bot restart requested by admin');
+    await this.sendReply(message, '🔄 Restarting Hyper Insta...');
+    logger.info('🔄 Hyper Insta restart requested by admin');
     
     // Give time for the message to be sent
     setTimeout(() => {
@@ -187,7 +187,7 @@ export class CorePlugin {
       logBufferSize: this.logBuffer.length
     };
 
-    const statsMessage = `📊 **Bot Statistics**\n\n` +
+    const statsMessage = `📊 **Hyper Insta Statistics**\n\n` +
       `💬 Messages Processed: ${stats.messagesProcessed}\n` +
       `🎯 Commands Executed: ${stats.commandsExecuted}\n` +
       `⏱️ Uptime: ${stats.uptime}\n` +
@@ -239,7 +239,6 @@ export class CorePlugin {
   }
 
   isAdmin(username) {
-    // You can configure admin users in config or environment
     const adminUsers = (process.env.ADMIN_USERS || '').split(',').filter(Boolean);
     return adminUsers.includes(username.toLowerCase());
   }
@@ -247,7 +246,7 @@ export class CorePlugin {
   addToLogBuffer(logEntry) {
     this.logBuffer.push(logEntry);
     if (this.logBuffer.length > this.maxLogBuffer) {
-      this.logBuffer.shift(); // Remove oldest entry
+      this.logBuffer.shift();
     }
   }
 
@@ -256,6 +255,6 @@ export class CorePlugin {
   }
 
   async cleanup() {
-    logger.info(`🧹 Core plugin cleaned up. Processed ${this.messageCount} messages, executed ${this.commandCount} commands`);
+    logger.info(`🧹 Core module cleaned up. Processed ${this.messageCount} messages, executed ${this.commandCount} commands`);
   }
 }

@@ -53,6 +53,7 @@ export const messageUtils = {
       id: message.id,
       text: message.text || '',
       sender: message.senderUsername || 'Unknown',
+      displayName: message.senderDisplayName || message.senderUsername || 'Unknown',
       timestamp: message.timestamp,
       thread: message.threadTitle || 'Direct Message',
       type: message.type || 'text'

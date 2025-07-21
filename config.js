@@ -14,7 +14,7 @@ export const config = {
     forwardMedia: process.env.FORWARD_MEDIA !== 'false'
   },
   
-  plugins: {
+  modules: {
     autoReply: {
       enabled: process.env.AUTO_REPLY_ENABLED === 'true',
       greetings: ['hello', 'hi', 'hey', 'good morning', 'good evening'],
