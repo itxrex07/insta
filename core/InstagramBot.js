@@ -47,53 +47,85 @@ async login() {
     } catch (error) {
       if (error.name === 'IgCheckpointError') {
         logger.warn('⚠️ Challenge required. Attempting manual resolution...');
+        logger.info('🔗 Challenge URL:', error.checkpoint_url || 'Not available');
 
         try {
-          // First, get the challenge info
-          const challenge = await this.ig.challenge.auto(false);
-          logger.info(`📧 Challenge step name: ${challenge.step_name}`);
-          logger.info(`📱 Available methods: ${challenge.step_data?.choice || 'email/phone'}`);
-          
-          // Select verification method (0 = email, 1 = phone)
-          await this.ig.challenge.selectVerifyMethod('0'); // Email verification
-          logger.info('📩 Verification code sent to your email');
-          
+          // Method 1: Try to get challenge state directly
+          let challengeState = null;
+          try {
+            challengeState = await this.ig.challenge.state();
+            logger.info('📋 Challenge state retrieved successfully');
+          } catch (stateError) {
+            logger.warn('⚠️ Could not get challenge state:', stateError.message);
+          }
+
+          if (challengeState && challengeState.step_name) {
+            logger.info(`📧 Challenge step: ${challengeState.step_name}`);
+            
+            // Try to select email verification
+            try {
+              await this.ig.challenge.selectVerifyMethod('0'); // 0 = email
+              logger.info('📩 Email verification selected');
+            } catch (selectError) {
+              logger.warn('⚠️ Could not select email method, trying phone...');
+              await this.ig.challenge.selectVerifyMethod('1'); // 1 = phone
+              logger.info('📱 Phone verification selected');
+            }
+          } else {
+            // Method 2: Try auto challenge resolution
+            logger.info('🔄 Trying auto challenge resolution...');
+            try {
+              const autoResult = await this.ig.challenge.auto(true);
+              if (autoResult) {
+                logger.info('📧 Auto challenge initiated');
+              } else {
+                throw new Error('Auto challenge returned null');
+              }
+            } catch (autoError) {
+              logger.error('❌ Auto challenge failed:', autoError.message);
+              
+              // Method 3: Manual challenge URL approach
+              if (error.checkpoint_url) {
+                logger.info('🌐 Please visit this URL to complete the challenge:');
+                logger.info(error.checkpoint_url);
+                logger.info('📝 After completing the web challenge, restart the bot');
+                throw new Error('Manual challenge completion required via web interface');
+              } else {
+                throw new Error('No challenge resolution method available');
+              }
+            }
+          }
+
+          // Prompt for verification code
           const { code } = await this.promptForCode();
+          logger.info('🔐 Attempting to verify code...');
+          
           const result = await this.ig.challenge.sendSecurityCode(code);
           
-          if (result.logged_in_user) {
+          if (result && result.logged_in_user) {
             await this.saveSession();
             logger.info('✅ Successfully verified challenge and logged in.');
             this.startMessageListener();
+          } else if (result && result.status === 'ok') {
+            // Some challenges return different success indicators
+            await this.saveSession();
+            logger.info('✅ Challenge completed successfully.');
+            this.startMessageListener();
           } else {
-            throw new Error('Challenge verification failed');
+            throw new Error('Challenge verification failed - invalid code or other issue');
           }
           
         } catch (challengeError) {
           logger.error('❌ Challenge resolution failed:', challengeError.message);
           
-          // If challenge fails, try alternative approach
-          if (challengeError.message.includes('No checkpoint data')) {
-            logger.info('🔄 Trying alternative challenge approach...');
-            try {
-              // Reset and try again
-              await this.ig.challenge.reset();
-              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
-              
-              const challenge = await this.ig.challenge.auto(true); // Auto-select method
-              const { code } = await this.promptForCode();
-              await this.ig.challenge.sendSecurityCode(code);
-              
-              await this.saveSession();
-              logger.info('✅ Successfully verified challenge with alternative method.');
-              this.startMessageListener();
-            } catch (altError) {
-              logger.error('❌ Alternative challenge method also failed:', altError.message);
-              throw altError;
-            }
-          } else {
-            throw challengeError;
-          }
+          // Final fallback: Manual resolution instructions
+          logger.info('💡 Alternative solutions:');
+          logger.info('1. Delete session file and wait 24 hours before retrying');
+          logger.info('2. Try logging in from Instagram mobile app first');
+          logger.info('3. Use a different network/IP address');
+          logger.info('4. Complete verification via Instagram web interface');
+          
+          throw challengeError;
         }
 
       } else if (error.name === 'IgLoginTwoFactorRequiredError') {
