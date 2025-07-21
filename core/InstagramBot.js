@@ -12,41 +12,46 @@ export class InstagramBot {
   }
 
   async login() {
-    try {
-      // Load existing session if available
-      await this.loadSession();
-      
-      this.ig.state.generateDevice(config.instagram.username);
-      
-      // Try to login with existing session first
-      try {
-        await this.ig.account.currentUser();
-        logger.info('✅ Logged in with existing session');
-        this.startMessageListener();
-        return;
-      } catch (error) {
-        logger.info('🔄 Existing session invalid, logging in with credentials...');
-      }
+  try {
+    // Load existing session if available
+    await this.loadSession();
 
-      // Login with username and password
-      await this.ig.account.login(
-        config.instagram.username,
-        config.instagram.password
-      );
-      
-      // Save session
-      await this.saveSession();
-      
-      logger.info('✅ Successfully logged into Instagram');
-      
-      // Start listening for messages
-      this.startMessageListener();
-      
-    } catch (error) {
-      logger.error('❌ Instagram login failed:', error.message);
-      throw error;
+    const username = config.instagram.username;
+    const password = config.instagram.password;
+
+    if (!username || !password) {
+      throw new Error('❌ Instagram credentials are not set. Please check your config or environment variables.');
     }
+
+    this.ig.state.generateDevice(username);
+
+    // Try to login with existing session first
+    try {
+      await this.ig.account.currentUser();
+      logger.info('✅ Logged in with existing session');
+      this.startMessageListener();
+      return;
+    } catch (error) {
+      logger.info('🔄 Existing session invalid, logging in with credentials...');
+    }
+
+    // Login with username and password
+    await this.ig.account.login(username, password);
+
+    // Save session
+    await this.saveSession();
+
+    logger.info('✅ Successfully logged into Instagram');
+
+    // Start listening for messages
+    this.startMessageListener();
+
+  } catch (error) {
+    logger.error('❌ Instagram login failed:', error.message);
+    throw error;
   }
+}
+
 
   async loadSession() {
     try {
