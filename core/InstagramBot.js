@@ -2,6 +2,9 @@ import { IgApiClient } from 'instagram-private-api';
 import { logger, fileUtils } from '../utils.js';
 import { config } from '../config.js';
 import readline from 'readline';
+import fs from 'fs';
+import tough from 'tough-cookie';
+
 
 export class InstagramBot {
   constructor() {
@@ -12,103 +15,63 @@ export class InstagramBot {
     this.isRunning = false;
     this.lastMessageCheck = new Date();
   }
+import fs from 'fs';
+import tough from 'tough-cookie';
 
-  async login() {
+async login() {
+  try {
     const username = config.instagram.username;
-    const password = config.instagram.password;
 
-    if (!username || !password) {
-      throw new Error('❌ Instagram credentials are missing in config');
+    if (!username) {
+      throw new Error('❌ INSTAGRAM_USERNAME is missing from config or environment.');
     }
+
+    this.ig.state.generateDevice(username);
+
+    // Load cookies from file
+    await this.loadCookiesFromJson('./cookies.json');
 
     try {
-      // Generate device and set user agent
-      this.ig.state.generateDevice(username);
-      
-      // Set additional headers to mimic real device
-      this.ig.request.defaults.headers = {
-        'User-Agent': this.ig.state.appUserAgent,
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive',
-        'X-IG-App-Locale': 'en_US',
-        'X-IG-Device-Locale': 'en_US',
-        'X-IG-Mapped-Locale': 'en_US',
-        'X-Pigeon-Session-Id': this.ig.state.pigeonSessionId,
-        'X-Pigeon-Rawclienttime': (Date.now() / 1000).toFixed(3),
-        'X-IG-Bandwidth-Speed-KBPS': '-1.000',
-        'X-IG-Bandwidth-TotalBytes-B': '0',
-        'X-IG-Bandwidth-TotalTime-MS': '0',
-        'X-IG-App-Startup-Country': 'US',
-        'X-Bloks-Version-Id': this.ig.state.bloksVersionId,
-        'X-IG-WWW-Claim': '0',
-        'X-Bloks-Is-Layout-RTL': 'false',
-        'X-Bloks-Is-Panorama-Enabled': 'true',
-        'X-IG-Device-ID': this.ig.state.uuid,
-        'X-IG-Family-Device-ID': this.ig.state.deviceId,
-        'X-IG-Android-ID': this.ig.state.androidId,
-        'X-IG-Timezone-Offset': '0',
-        'X-IG-Connection-Type': 'WIFI',
-        'X-IG-Capabilities': '3brTvwM=',
-        'X-IG-App-ID': '567067343352427',
-        'Priority': 'u=3',
-        'X-FB-HTTP-Engine': 'Liger'
-      };
-
-      // Try to load existing session first
-      if (await this.loadSession()) {
-        try {
-          const user = await this.ig.account.currentUser();
-          logger.info(`✅ Logged in with existing session as @${user.username}`);
-          this.startMessageListener();
-          return;
-        } catch (error) {
-          logger.warn('⚠️ Existing session invalid, logging in with credentials...');
-        }
-      }
-
-      // Simulate pre-login flow
-      logger.info('🔄 Simulating pre-login flow...');
-      await this.ig.simulate.preLoginFlow();
-      
-      // Add delay to avoid rate limiting
-      await this.delay(2000);
-
-      // Perform login
-      logger.info('🔐 Attempting login...');
-      const loginResult = await this.ig.account.login(username, password);
-      
-      // Simulate post-login flow
-      await this.ig.simulate.postLoginFlow();
-      
-      // Save session
-      await this.saveSession();
-      
-      logger.info(`✅ Successfully logged in as @${loginResult.username}`);
+      await this.ig.account.currentUser(); // test session validity
+      logger.info('✅ Logged in using saved cookies');
       this.startMessageListener();
-
-    } catch (error) {
-      logger.error('❌ Instagram login failed:', error.message);
-      
-      // Handle specific error types
-      if (error.name === 'IgCheckpointError') {
-        logger.error('🚫 Account requires verification. Please verify your account manually.');
-        logger.info('💡 Try logging in through the Instagram app first, then restart the bot.');
-      } else if (error.name === 'IgLoginTwoFactorRequiredError') {
-        logger.error('🔐 Two-factor authentication required. Please disable 2FA temporarily.');
-      } else if (error.name === 'IgSentryBlockError') {
-        logger.error('🚫 Account temporarily blocked. Wait 24-48 hours before retrying.');
-      } else if (error.message.includes('challenge_required')) {
-        logger.error('🚫 Challenge required. Please verify your account manually.');
-      } else if (error.message.includes('rate_limit')) {
-        logger.error('⚠️ Rate limited. Please wait and try again later.');
-      } else if (error.message.includes('Invalid parameters')) {
-        logger.error('❌ Invalid username or password. Please check your credentials.');
-      }
-      
-      throw error;
+    } catch (err) {
+      logger.error('❌ Invalid or expired cookies:', err.message);
+      throw err;
     }
+  } catch (error) {
+    logger.error('❌ Failed to initialize bot:', error.message);
+    throw error;
   }
+}
+
+async loadCookiesFromJson(path = './cookies.json') {
+  try {
+    const raw = fs.readFileSync(path, 'utf-8');
+    const cookies = JSON.parse(raw);
+
+    for (const cookie of cookies) {
+      const toughCookie = new tough.Cookie({
+        key: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain.replace(/^\./, ''),
+        path: cookie.path,
+        secure: cookie.secure,
+        httpOnly: cookie.httpOnly,
+      });
+
+      await this.ig.state.cookieJar.setCookie(
+        toughCookie.toString(),
+        `https://${cookie.domain}${cookie.path}`
+      );
+    }
+
+    logger.info('🍪 Loaded Instagram cookies from file');
+  } catch (error) {
+    logger.error('❌ Failed to load cookies:', error.message);
+    throw error;
+  }
+}
 
   async loadSession() {
     try {
