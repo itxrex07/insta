@@ -1,15 +1,15 @@
 import dotenv from 'dotenv';
-import { InstagramBot } from './bot/InstagramBot.js';
-import { TelegramForwarder } from './services/TelegramForwarder.js';
+import { InstagramBot } from './core/InstagramBot.js';
+import { TelegramBridge } from './bridge/TelegramBridge.js';
 import { PluginManager } from './plugins/PluginManager.js';
-import { logger } from './utils/logger.js';
+import { logger } from './utils.js';
 
 dotenv.config();
 
 class InstagramUserBot {
   constructor() {
     this.instagramBot = new InstagramBot();
-    this.telegramForwarder = new TelegramForwarder();
+    this.telegramBridge = new TelegramBridge();
     this.pluginManager = new PluginManager();
   }
 
@@ -20,8 +20,8 @@ class InstagramUserBot {
       // Initialize Instagram connection
       await this.instagramBot.login();
       
-      // Initialize Telegram forwarder
-      await this.telegramForwarder.initialize();
+      // Initialize Telegram bridge
+      await this.telegramBridge.initialize();
       
       // Load plugins
       await this.pluginManager.loadPlugins();
@@ -46,7 +46,7 @@ class InstagramUserBot {
         
         // Forward to Telegram if enabled
         if (processedMessage.shouldForward) {
-          await this.telegramForwarder.forwardMessage(processedMessage);
+          await this.telegramBridge.forwardMessage(processedMessage);
         }
       } catch (error) {
         logger.error('Error processing message:', error);
@@ -56,7 +56,7 @@ class InstagramUserBot {
     // Handle media messages
     this.instagramBot.onMedia(async (media) => {
       try {
-        await this.telegramForwarder.forwardMedia(media);
+        await this.telegramBridge.forwardMedia(media);
       } catch (error) {
         logger.error('Error forwarding media:', error);
       }
@@ -70,8 +70,11 @@ class InstagramUserBot {
     process.on('SIGINT', async () => {
       logger.info('🛑 Shutting down bot...');
       await this.instagramBot.disconnect();
+      await this.pluginManager.unloadPlugins();
       process.exit(0);
     });
+
+    logger.info('🤖 Bot is running... Press Ctrl+C to stop');
   }
 }
 
