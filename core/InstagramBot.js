@@ -11,7 +11,7 @@ export class InstagramBot {
     this.isRunning = false;
   }
 
-  async login() {
+async login() {
   try {
     // Load existing session if available
     await this.loadSession();
@@ -40,22 +40,27 @@ export class InstagramBot {
       await this.ig.account.login(username, password);
       await this.ig.simulate.postLoginFlow();
 
-      // Save session
       await this.saveSession();
-
       logger.info('✅ Successfully logged into Instagram');
       this.startMessageListener();
     } catch (error) {
       if (error.name === 'IgCheckpointError') {
-        logger.warn('⚠️ Challenge required. Attempting auto-resolution...');
+        logger.warn('⚠️ Challenge required. Attempting manual resolution...');
 
-        await this.ig.challenge.auto(true); // auto-choose method (email/phone)
-        const { code } = await this.promptForCode(); // custom method to prompt user for 6-digit code
-        await this.ig.challenge.sendSecurityCode(code);
+        try {
+          await this.ig.challenge.state(); // force fetch challenge data
+          await this.ig.challenge.selectVerifyMethod('0'); // '0' = email, '1' = phone
+          const { code } = await this.promptForCode();
+          await this.ig.challenge.sendSecurityCode(code);
 
-        await this.saveSession();
-        logger.info('✅ Successfully verified challenge and logged in.');
-        this.startMessageListener();
+          await this.saveSession();
+          logger.info('✅ Successfully verified challenge and logged in.');
+          this.startMessageListener();
+        } catch (challengeError) {
+          logger.error('❌ Challenge resolution failed:', challengeError.message);
+          throw challengeError;
+        }
+
       } else {
         logger.error('❌ Instagram login failed:', error.message);
         throw error;
