@@ -20,7 +20,7 @@ export class InstagramBot {
     const password = config.instagram.password;
 
     if (!username || !password) {
-      throw new Error('❌ Instagram credentials are missing. Set INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD in your environment.');
+      throw new Error('❌ Instagram credentials are missing. Set INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD.');
     }
 
     this.ig.state.generateDevice(username);
@@ -31,23 +31,39 @@ export class InstagramBot {
       logger.info('✅ Logged in with existing session');
       this.startMessageListener();
       return;
-    } catch (error) {
+    } catch {
       logger.info('🔄 Existing session invalid, logging in with credentials...');
     }
 
-    // Login with username and password
-    await this.ig.account.login(username, password);
+    try {
+      await this.ig.simulate.preLoginFlow();
+      await this.ig.account.login(username, password);
+      await this.ig.simulate.postLoginFlow();
 
-    // Save session
-    await this.saveSession();
+      // Save session
+      await this.saveSession();
 
-    logger.info('✅ Successfully logged into Instagram');
+      logger.info('✅ Successfully logged into Instagram');
+      this.startMessageListener();
+    } catch (error) {
+      if (error.name === 'IgCheckpointError') {
+        logger.warn('⚠️ Challenge required. Attempting auto-resolution...');
 
-    // Start listening for messages
-    this.startMessageListener();
+        await this.ig.challenge.auto(true); // auto-choose method (email/phone)
+        const { code } = await this.promptForCode(); // custom method to prompt user for 6-digit code
+        await this.ig.challenge.sendSecurityCode(code);
+
+        await this.saveSession();
+        logger.info('✅ Successfully verified challenge and logged in.');
+        this.startMessageListener();
+      } else {
+        logger.error('❌ Instagram login failed:', error.message);
+        throw error;
+      }
+    }
 
   } catch (error) {
-    logger.error('❌ Instagram login failed:', error.message);
+    logger.error('❌ Failed to initialize bot:', error.message);
     throw error;
   }
 }
