@@ -100,7 +100,6 @@ async login() {
     logger.error('❌ Login failed:', error.message);
     throw error;
   }
-}
 
           // Prompt for verification code
           const { code } = await this.promptForCode();
