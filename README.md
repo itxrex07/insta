@@ -12,6 +12,10 @@ A powerful Instagram UserBot with Telegram integration and plugin system for aut
 - **Auto-Reply**: Respond to messages automatically
 - **Message Filtering**: Block spam and unwanted messages
 - **Message Logging**: Keep track of all messages
+- **Command System**: Built-in commands with prefix support
+- **Core Commands**: ping, status, uptime, logs, info, stats
+- **Help System**: Comprehensive help and command listing
+- **Admin Commands**: Restricted commands for bot administrators
 
 ## 📁 Project Structure
 
@@ -26,6 +30,8 @@ instagram-userbot/
 │   └── TelegramBridge.js # Telegram integration
 └── plugins/
     ├── PluginManager.js      # Plugin system manager
+    ├── CorePlugin.js         # Core bot commands
+    ├── HelpPlugin.js         # Help and command listing
     ├── AutoReplyPlugin.js    # Auto-reply functionality
     ├── MessageFilterPlugin.js # Message filtering
     └── MessageLoggerPlugin.js # Message logging
@@ -97,6 +103,35 @@ All configuration is handled in `config.js` and can be overridden with environme
 - `AUTO_REPLY_ENABLED` - Enable/disable auto-reply (default: false)
 - `MESSAGE_FILTER_ENABLED` - Enable/disable message filtering (default: true)
 - `MESSAGE_LOGGER_ENABLED` - Enable/disable message logging (default: true)
+- `ADMIN_USERS` - Comma-separated list of admin usernames
+
+## 🎯 Commands
+
+The bot supports commands with the `!` prefix. Here are the available commands:
+
+### Core Commands
+- `!ping` - Check if bot is responsive
+- `!status` - Show detailed bot status and system information
+- `!uptime` - Show how long the bot has been running
+- `!logs [count]` - Show recent bot logs (default: 10)
+- `!info` - Show bot information
+- `!stats` - Show bot statistics
+- `!restart` - Restart the bot (admin only)
+
+### Help Commands
+- `!help` - Show general help information
+- `!help <command>` - Show specific command help
+- `!commands` - List all available commands
+- `!plugins` - List all loaded plugins
+
+### Usage Examples
+```
+!ping
+!status
+!logs 20
+!help ping
+!help CorePlugin
+```
 
 ## 🚨 Important Notes
 
