@@ -1,6 +1,7 @@
 import { IgApiClient } from 'instagram-private-api';
 import { logger, fileUtils } from '../utils.js';
 import { config } from '../config.js';
+import readline from 'readline';
 
 export class InstagramBot {
   constructor() {
@@ -73,7 +74,19 @@ async login() {
   }
 }
 
+promptForCode() {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
 
+    rl.question('📩 Enter the 6-digit Instagram code sent to your email or phone: ', (code) => {
+      rl.close();
+      resolve({ code });
+    });
+  });
+}
 
   async loadSession() {
     try {
