@@ -2,7 +2,7 @@ import { logger } from '../utils.js';
 
 export class HelpModule {
   constructor(moduleManager) {
-    this.name = 'Help';
+    this.name = 'help';
     this.moduleManager = moduleManager;
     this.commandPrefix = '.';
     this.commands = {
