@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { InstagramBot } from './core/InstagramBot.js';
+import { InstagramBot } from './core/bot.js';
 import { TelegramBridge } from './bridge/TelegramBridge.js';
 import { ModuleManager } from './modules/ModuleManager.js';
 import { logger } from './utils.js';
