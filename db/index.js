@@ -1,5 +1,5 @@
 import { config } from '../config.js'; 
-const { MongoClient } = require('mongodb');
+import { MongoClient } from 'mongodb';
 
 const MONGO_URI = config.mongo.uri;
 const DB_NAME = config.mongo.dbName;
