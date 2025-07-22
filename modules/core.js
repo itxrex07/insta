@@ -5,7 +5,7 @@ import fs from 'fs';
 
 export class CoreModule {
   constructor(instagramBot) {
-    this.name = 'Core';
+    this.name = 'core';
     this.instagramBot = instagramBot;
     this.startTime = new Date();
     this.commandPrefix = '.';
