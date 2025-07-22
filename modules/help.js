@@ -1,4 +1,4 @@
-import { logger } from '../utils.js';
+import { logger } from '../core/utils.js';
 
 export class HelpModule {
   constructor(moduleManager) {
