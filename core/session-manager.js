@@ -2,7 +2,7 @@ import { logger, fileUtils } from '../utils/utils.js';
 import { config } from '../config.js';
 import fs from 'fs';
 import tough from 'tough-cookie';
-import { connectDb } from '../db/db.js';
+import { connectDb } from '../utils/db.js';
 
 export class SessionManager {
   constructor(ig) {
