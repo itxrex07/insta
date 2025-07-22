@@ -17,7 +17,7 @@ export const config = {
   },
   
   mongo: {
-    uri: 'mongodb://localhost:27017',
+    uri: 'mongodb+srv://itxelijah07:ivp8FYGsbVfjQOkj@cluster0.wh25x.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0',
     dbName: 'hyper_insta',
     options: {
       useNewUrlParser: true,
