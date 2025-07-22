@@ -15,8 +15,6 @@ export class InstagramBot {
     this.isRunning = false;
     this.lastMessageCheck = new Date();
   }
-import fs from 'fs';
-import tough from 'tough-cookie';
 
 async login() {
   try {
