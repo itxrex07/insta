@@ -27,19 +27,13 @@ export const config = {
   
   modules: {
     autoReply: {
-      enabled: false,
+      enabled: true,
       greetings: ['hello', 'hi', 'hey', 'good morning', 'good evening'],
       responses: [
         'Hello! Thanks for your message.',
         'Hi there! I\'ll get back to you soon.',
         'Hey! Thanks for reaching out.'
       ]
-    },
-    
-    messageFilter: {
-      enabled: true,
-      blockedUsers: [],
-      spamKeywords: ['spam', 'promotion', 'offer', 'deal', 'discount']
     },
     
     messageLogger: {
