@@ -5,7 +5,7 @@ export const config = {
     sessionPath: './session/session.json',
     messageCheckInterval: 10000, // Check for messages every 10 seconds (reduced to avoid rate limiting)
     maxRetries: 3,
-    useMongoSession: true // Set to false to use file-based sessions
+    useMongoSession: false // Set to false to use file-based sessions
   },
   
   telegram: {
