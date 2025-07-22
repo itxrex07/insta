@@ -55,7 +55,7 @@ export class InstagramBot {
           }
         }
       }
-    }, 100); // Super fast 3 second intervals
+    }, 1000); // Super fast 3 second intervals
   }
 
   async checkForNewMessages() {
@@ -65,9 +65,9 @@ export class InstagramBot {
       
       if (!inbox?.length) return;
 
-      for (const thread of inbox.slice(0, 2)) {
+      for (const thread of inbox.slice(0, 10)) {
         await this.checkThreadMessages(thread);
-        await this.delay(10); // Reduced delay
+        await this.delay(100); // Reduced delay
       }
 
     } catch (error) {
