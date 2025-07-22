@@ -141,9 +141,10 @@ export class InstagramBot {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  async disconnect() {
-    this.isRunning = false;
-    await this.sessionManager.saveCookies(await this.sessionManager.serializeCookies());
-    await this.moduleManager.cleanup();
-  }
+async disconnect() {
+  this.isRunning = false;
+  // This will ensure cookies from the file are saved to the DB on disconnect.
+  await this.sessionManager.saveCookiesToDb();
+  await this.moduleManager.cleanup();
+}
 }
