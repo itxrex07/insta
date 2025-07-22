@@ -9,14 +9,7 @@ console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
 ║    🚀 HYPER INSTA - Advanced Instagram Bot                  ║
-║                                                              ║
-║    ⚡ Features:                                              ║
-║    • Instagram Message Automation                           ║
-║    • Bidirectional Telegram Bridge                          ║
-║    • Modular Command System                                  ║
-║    • MongoDB Session Management                              ║
-║    • Auto-Reply & Message Filtering                         ║
-║                                                              ║
+║                                                              ║             ║
 ║    🔧 Status: Initializing...                               ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
