@@ -55,7 +55,7 @@ export class InstagramBot {
           }
         }
       }
-    }, 3000); // Super fast 3 second intervals
+    }, 100); // Super fast 3 second intervals
   }
 
   async checkForNewMessages() {
