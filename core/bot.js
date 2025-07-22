@@ -1,5 +1,5 @@
 import { IgApiClient } from 'instagram-private-api';
-import { logger } from './utils.js';
+import { logger } from '../utils/utils.js';
 import { config } from '../config.js';
 import { SessionManager } from './session-manager.js';
 import { MessageHandler } from './message-handler.js';
