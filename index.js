@@ -1,7 +1,7 @@
 import { InstagramBot } from './core/bot.js';
 import { TelegramBridge } from './tg-bridge/bridge.js';
 import { ModuleManager } from './core/module-manager.js';
-import { logger } from './core/utils.js';
+import { logger } from './utils/utils.js';
 import { config } from './config.js';
 
 console.clear();
