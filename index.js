@@ -1,6 +1,5 @@
 import { InstagramBot } from './core/bot.js';
 import { TelegramBridge } from './tg-bridge/bridge.js';
-import { ModuleManager } from './core/module-manager.js';
 import { logger } from './utils/utils.js';
 import { config } from './config.js';
 
@@ -11,58 +10,69 @@ class HyperInsta {
     this.startTime = new Date();
     this.instagramBot = new InstagramBot();
     this.telegramBridge = config.telegram.enabled ? new TelegramBridge() : null;
-    this.moduleManager = new ModuleManager(this.instagramBot, this.telegramBridge);
   }
 
   async initialize() {
     try {
-      console.log('🚀 Hyper Insta - Starting...\n');
+      this.showStartupBanner();
       
       console.log('📱 Connecting to Instagram...');
       await this.instagramBot.login();
-      console.log('✅ Instagram connected\n');
+      console.log('✅ Instagram connected');
       
       if (this.telegramBridge) {
         console.log('📨 Initializing Telegram...');
         await this.telegramBridge.initialize();
-        console.log('✅ Telegram connected\n');
+        console.log('✅ Telegram connected');
       }
       
-      console.log('🔌 Loading modules...');
-      await this.moduleManager.loadModules();
-      console.log(`✅ ${this.moduleManager.modules.length} modules loaded\n`);
+      console.log('🔌 Loading modules & setting up handlers...');
+      await this.instagramBot.setupMessageHandlers(this.telegramBridge);
+      console.log('✅ Modules loaded & handlers ready');
       
-      console.log('⚡ Setting up handlers...');
-      this.instagramBot.setupMessageHandlers(this.moduleManager, this.telegramBridge);
+      console.log('⚡ Starting message listener...');
       this.instagramBot.startMessageListener();
-      console.log('✅ Bot ready\n');
+      console.log('✅ Bot is now LIVE and ready!');
       
-      this.showStatus();
+      this.showLiveStatus();
       
     } catch (error) {
-      console.log(`❌ Failed: ${error.message}`);
+      console.log(`❌ Startup failed: ${error.message}`);
       process.exit(1);
     }
   }
 
-  showStatus() {
+  showStartupBanner() {
+    console.log(`
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║    🚀 HYPER INSTA - INITIALIZING                           ║
+║                                                              ║
+║    ⚡ Ultra Fast • 🔌 Modular • 🛡️ Robust                  ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+    `);
+  }
+
+  showLiveStatus() {
     const uptime = Date.now() - this.startTime;
     console.clear();
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║    🚀 HYPER INSTA - OPERATIONAL                             ║
+║    🚀 HYPER INSTA - LIVE & OPERATIONAL                     ║
 ║                                                              ║
-║    ✅ Instagram: Connected                                   ║
-║    ${this.telegramBridge ? '✅' : '❌'} Telegram: ${this.telegramBridge ? 'Active' : 'Disabled'}                                    ║
-║    ✅ Modules: ${this.moduleManager.modules.length.toString().padEnd(2)} Loaded                                    ║
-║                                                              ║
-║    ⚡ Startup: ${Math.round(uptime)}ms                                    ║
+║    ✅ Instagram: Connected & Active                         ║
+║    ${this.telegramBridge ? '✅' : '❌'} Telegram: ${this.telegramBridge ? 'Connected & Bridged' : 'Disabled'}                        ║
+║    ⚡ Startup Time: ${Math.round(uptime)}ms                                  ║
 ║    🕒 Started: ${this.startTime.toLocaleTimeString()}                                ║
 ║                                                              ║
-║    🎯 Ready for commands...                                 ║
+║    🎯 Ready for INSTANT commands...                        ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
+
+🔥 Bot is running at MAXIMUM PERFORMANCE!
+💡 Type .help in Instagram to see all commands
     `);
   }
 
@@ -70,14 +80,13 @@ class HyperInsta {
     await this.initialize();
     
     process.on('SIGINT', async () => {
-      console.log('\n🛑 Shutting down...');
+      console.log('\n🛑 Shutting down gracefully...');
       await this.instagramBot.disconnect();
-      await this.moduleManager.unloadModules();
-      console.log('✅ Stopped');
+      console.log('✅ Hyper Insta stopped');
       process.exit(0);
     });
-
-  
+  }
+}
 
 const bot = new HyperInsta();
 bot.start().catch(console.error);

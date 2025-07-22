@@ -1,40 +1,64 @@
-import { BaseModule } from '../core/base-module.js';
-
-export class HelpModule extends BaseModule {
+export class HelpModule {
   constructor(moduleManager) {
-    super();
     this.moduleManager = moduleManager;
-    this.description = 'Dynamic help system for all commands and modules';
+    this.name = 'help';
+    this.description = 'Dynamic help system';
+    this.commands = {};
     this.setupCommands();
   }
 
   setupCommands() {
-    this.registerCommand('help', this.handleHelp, 'Show help for commands or modules', '.help [command|module]');
-    this.registerCommand('commands', this.handleCommands, 'List all available commands', '.commands');
-    this.registerCommand('modules', this.handleModules, 'List all loaded modules', '.modules');
+    this.commands['help'] = {
+      handler: this.handleHelp.bind(this),
+      description: 'Show help for commands or modules',
+      usage: '.help [command|module]',
+      adminOnly: false
+    };
+  }
+
+  getCommands() {
+    return this.commands;
+  }
+
+  async process(message) {
+    return message;
   }
 
   async handleHelp(args, message) {
     const query = args[0]?.toLowerCase();
     
     if (!query) {
-      const helpText = `🚀 **Hyper Insta Help**\n\n` +
-        `**Quick Commands:**\n` +
-        `• \`.ping\` - Test responsiveness\n` +
-        `• \`.status\` - Bot status\n` +
-        `• \`.help <command>\` - Command help\n` +
-        `• \`.commands\` - All commands\n` +
-        `• \`.modules\` - All modules\n\n` +
-        `**Usage:** \`.help <command>\` or \`.help <module>\``;
+      // Show all commands organized by module
+      const allCommands = this.moduleManager.getAllCommands();
+      const moduleGroups = {};
+      
+      // Group commands by module
+      for (const [name, cmd] of allCommands) {
+        const moduleName = cmd.moduleName;
+        if (!moduleGroups[moduleName]) {
+          moduleGroups[moduleName] = [];
+        }
+        moduleGroups[moduleName].push({ name, ...cmd });
+      }
+
+      let helpText = `🚀 **Hyper Insta Commands**\n\n`;
+      
+      for (const [moduleName, commands] of Object.entries(moduleGroups)) {
+        helpText += `**${moduleName.toUpperCase()}:**\n`;
+        for (const cmd of commands) {
+          helpText += `• \`.${cmd.name}\` - ${cmd.description}\n`;
+        }
+        helpText += `\n`;
+      }
+      
+      helpText += `💡 Use \`.help <command>\` for detailed help`;
       
       await this.sendReply(message, helpText);
       return;
     }
 
-    // Check if it's a command
-    const allCommands = this.getAllCommands();
-    const command = allCommands.get(query);
-    
+    // Check if it's a specific command
+    const command = this.moduleManager.getCommand(query);
     if (command) {
       const helpText = `🎯 **${query}**\n\n` +
         `📝 ${command.description}\n` +
@@ -56,50 +80,13 @@ export class HelpModule extends BaseModule {
       
       const helpText = `🔌 **${module.name} Module**\n\n` +
         `📝 ${module.description}\n\n` +
-        `**Commands (${Object.keys(commands).length}):**\n${commandList || 'No commands'}`;
+        `**Commands:**\n${commandList || 'No commands'}`;
       
       await this.sendReply(message, helpText);
       return;
     }
 
     await this.sendReply(message, `❌ '${query}' not found`);
-  }
-
-  async handleCommands(args, message) {
-    const allCommands = this.getAllCommands();
-    const commandList = Array.from(allCommands.entries())
-      .map(([name, cmd]) => `• \`.${name}\` - ${cmd.description}`)
-      .join('\n');
-
-    const helpText = `🎯 **All Commands (${allCommands.size})**\n\n${commandList}`;
-    await this.sendReply(message, helpText);
-  }
-
-  async handleModules(args, message) {
-    const modules = this.moduleManager.modules;
-    const moduleList = modules.map(module => {
-      const cmdCount = Object.keys(module.getCommands()).length;
-      return `• **${module.name}** - ${cmdCount} commands`;
-    }).join('\n');
-
-    const helpText = `🔌 **Loaded Modules (${modules.length})**\n\n${moduleList}`;
-    await this.sendReply(message, helpText);
-  }
-
-  getAllCommands() {
-    const allCommands = new Map();
-    
-    for (const module of this.moduleManager.modules) {
-      const commands = module.getCommands();
-      for (const [name, command] of Object.entries(commands)) {
-        allCommands.set(name.toLowerCase(), {
-          ...command,
-          moduleName: module.name
-        });
-      }
-    }
-
-    return allCommands;
   }
 
   async sendReply(message, text) {

@@ -1,28 +1,56 @@
-import { BaseModule } from '../core/base-module.js';
-import { logger } from '../utils/utils.js';
-import { config } from '../config.js';
-import os from 'os';
-
-export class CoreModule extends BaseModule {
+export class CoreModule {
   constructor(instagramBot) {
-    super();
     this.instagramBot = instagramBot;
-    this.startTime = new Date();
+    this.name = 'core';
     this.description = 'Core bot commands and system information';
+    this.startTime = new Date();
     this.messageCount = 0;
     this.commandCount = 0;
     this.logBuffer = [];
     this.maxLogBuffer = 50;
-    
+    this.commands = {};
     this.setupCommands();
   }
 
   setupCommands() {
-    this.registerCommand('ping', this.handlePing, 'Test bot responsiveness with actual ping', '.ping');
-    this.registerCommand('status', this.handleStatus, 'Show bot operational status', '.status');
-    this.registerCommand('server', this.handleServer, 'Show server system information', '.server');
-    this.registerCommand('logs', this.handleLogs, 'Show recent bot activity logs', '.logs [count]');
-    this.registerCommand('restart', this.handleRestart, 'Restart the bot', '.restart', true);
+    this.commands['ping'] = {
+      handler: this.handlePing.bind(this),
+      description: 'Test bot responsiveness with actual ping',
+      usage: '.ping',
+      adminOnly: false
+    };
+
+    this.commands['status'] = {
+      handler: this.handleStatus.bind(this),
+      description: 'Show bot operational status',
+      usage: '.status',
+      adminOnly: false
+    };
+
+    this.commands['server'] = {
+      handler: this.handleServer.bind(this),
+      description: 'Show server system information',
+      usage: '.server',
+      adminOnly: false
+    };
+
+    this.commands['logs'] = {
+      handler: this.handleLogs.bind(this),
+      description: 'Show recent bot activity logs',
+      usage: '.logs [count]',
+      adminOnly: true
+    };
+
+    this.commands['restart'] = {
+      handler: this.handleRestart.bind(this),
+      description: 'Restart the bot',
+      usage: '.restart',
+      adminOnly: true
+    };
+  }
+
+  getCommands() {
+    return this.commands;
   }
 
   async process(message) {
@@ -33,19 +61,17 @@ export class CoreModule extends BaseModule {
 
   async handlePing(args, message) {
     const start = Date.now();
-    const sent = await this.sendReply(message, '🏓 Pinging...');
-    if (sent) {
-      const ping = Date.now() - start;
-      await this.sendReply(message, `🏓 Pong! ${ping}ms`);
-    }
+    await this.sendReply(message, '🏓 Pong!');
+    const ping = Date.now() - start;
+    await this.sendReply(message, `⚡ Response time: ${ping}ms`);
   }
 
   async handleStatus(args, message) {
     const uptime = this.getUptime();
     const memUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     
-    const status = `🚀 **Hyper Insta Status**\n\n` +
-      `✅ Status: Online & Active\n` +
+    const status = `🚀 **Bot Status**\n\n` +
+      `✅ Status: Online\n` +
       `⏱️ Uptime: ${uptime}\n` +
       `📊 Messages: ${this.messageCount}\n` +
       `🎯 Commands: ${this.commandCount}\n` +
@@ -55,13 +81,13 @@ export class CoreModule extends BaseModule {
   }
 
   async handleServer(args, message) {
-    const serverInfo = `🖥️ **Server Information**\n\n` +
+    const os = await import('os');
+    const serverInfo = `🖥️ **Server Info**\n\n` +
       `🔧 Platform: ${os.platform()} ${os.arch()}\n` +
       `🟢 Node.js: ${process.version}\n` +
       `💻 CPU Cores: ${os.cpus().length}\n` +
       `🧠 Total RAM: ${Math.round(os.totalmem() / 1024 / 1024)}MB\n` +
-      `🆓 Free RAM: ${Math.round(os.freemem() / 1024 / 1024)}MB\n` +
-      `📈 Load Avg: ${os.loadavg().map(l => l.toFixed(2)).join(', ')}`;
+      `🆓 Free RAM: ${Math.round(os.freemem() / 1024 / 1024)}MB`;
 
     await this.sendReply(message, serverInfo);
   }

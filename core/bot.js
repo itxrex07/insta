@@ -3,12 +3,14 @@ import { logger } from '../utils/utils.js';
 import { config } from '../config.js';
 import { SessionManager } from './session-manager.js';
 import { MessageHandler } from './message-handler.js';
+import { ModuleManager } from './module-manager.js';
 
 export class InstagramBot {
   constructor() {
     this.ig = new IgApiClient();
     this.sessionManager = new SessionManager(this.ig);
-    this.messageHandler = null;
+    this.moduleManager = new ModuleManager(this);
+    this.messageHandler = new MessageHandler(this, this.moduleManager, null);
     this.isRunning = false;
     this.lastMessageCheck = new Date();
   }
@@ -17,8 +19,12 @@ export class InstagramBot {
     return await this.sessionManager.login();
   }
 
-  setupMessageHandlers(moduleManager, telegramBridge) {
-    this.messageHandler = new MessageHandler(this, moduleManager, telegramBridge);
+  async setupMessageHandlers(telegramBridge) {
+    // Load modules first
+    await this.moduleManager.loadModules();
+    
+    // Update message handler with telegram bridge
+    this.messageHandler = new MessageHandler(this, this.moduleManager, telegramBridge);
     
     // Setup Telegram reply handler
     if (telegramBridge?.enabled) {
@@ -49,7 +55,7 @@ export class InstagramBot {
           }
         }
       }
-    }, config.instagram.messageCheckInterval);
+    }, 3000); // Super fast 3 second intervals
   }
 
   async checkForNewMessages() {
@@ -59,9 +65,9 @@ export class InstagramBot {
       
       if (!inbox?.length) return;
 
-      for (const thread of inbox.slice(0, 3)) {
+      for (const thread of inbox.slice(0, 2)) {
         await this.checkThreadMessages(thread);
-        await this.delay(200);
+        await this.delay(100); // Reduced delay
       }
 
     } catch (error) {
@@ -138,5 +144,6 @@ export class InstagramBot {
   async disconnect() {
     this.isRunning = false;
     await this.sessionManager.saveSession();
+    await this.moduleManager.cleanup();
   }
 }

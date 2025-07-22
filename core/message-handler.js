@@ -6,34 +6,14 @@ export class MessageHandler {
     this.instagramBot = instagramBot;
     this.moduleManager = moduleManager;
     this.telegramBridge = telegramBridge;
-    this.commandRegistry = new Map();
-    this.buildCommandRegistry();
-  }
-
-  buildCommandRegistry() {
-    this.commandRegistry.clear();
-    
-    for (const module of this.moduleManager.modules) {
-      const commands = module.getCommands();
-      for (const [name, command] of Object.entries(commands)) {
-        this.commandRegistry.set(name.toLowerCase(), {
-          ...command,
-          module: module,
-          moduleName: module.name
-        });
-      }
-    }
   }
 
   async handleMessage(message) {
     try {
-      // Process through modules first (for logging, stats, etc.)
-      let processedMessage = { ...message };
-      for (const module of this.moduleManager.modules) {
-        processedMessage = await module.process(processedMessage);
-      }
+      // Process through modules for stats/logging
+      message = await this.moduleManager.processMessage(message);
 
-      // Check for commands
+      // Handle commands INSTANTLY
       if (message.text?.startsWith('.')) {
         await this.handleCommand(message);
         return;
@@ -41,7 +21,7 @@ export class MessageHandler {
 
       // Forward to Telegram if enabled
       if (this.telegramBridge?.enabled && config.telegram.enabled) {
-        await this.telegramBridge.forwardMessage(processedMessage);
+        await this.telegramBridge.forwardMessage(message);
       }
 
     } catch (error) {
@@ -52,7 +32,7 @@ export class MessageHandler {
   async handleCommand(message) {
     const commandText = message.text.slice(1).trim();
     const [commandName, ...args] = commandText.split(' ');
-    const command = this.commandRegistry.get(commandName.toLowerCase());
+    const command = this.moduleManager.getCommand(commandName);
 
     if (!command) return;
 
@@ -63,7 +43,12 @@ export class MessageHandler {
     }
 
     try {
+      // Log command execution
+      logger.info(`⚡ Command executed: .${commandName} by @${message.senderUsername}`);
+      
+      // Execute command INSTANTLY
       await command.handler(args, message);
+      
     } catch (error) {
       logger.error(`Command ${commandName} error:`, error.message);
       await this.instagramBot.sendMessage(message.threadId, `❌ Error: ${error.message}`);
@@ -72,9 +57,5 @@ export class MessageHandler {
 
   isAdmin(username) {
     return config.admin.users.includes(username.toLowerCase());
-  }
-
-  refreshCommands() {
-    this.buildCommandRegistry();
   }
 }
