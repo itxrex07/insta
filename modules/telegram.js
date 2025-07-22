@@ -2,7 +2,7 @@ import { logger } from '../utils.js';
 
 export class TelegramModule {
   constructor(telegramBridge) {
-    this.name = 'Telegram';
+    this.name = 'telegram';
     this.telegramBridge = telegramBridge;
     this.commandPrefix = '.';
     this.commands = {
