@@ -1,4 +1,5 @@
 import { logger } from '../core/utils.js';
+import { config } from '../config.js';
 
 export class HelpModule {
   constructor(moduleManager) {
@@ -25,64 +26,38 @@ export class HelpModule {
   }
 
   async process(message) {
-    try {
-      // Check if message starts with command prefix
-      if (message.text && message.text.startsWith(this.commandPrefix)) {
-        const commandText = message.text.slice(this.commandPrefix.length).trim();
-        const [commandName, ...args] = commandText.split(' ');
-        
-        if (this.commands[commandName.toLowerCase()]) {
-          await this.executeCommand(commandName.toLowerCase(), args, message);
-          message.shouldForward = false; // Don't forward command messages
-        }
-      }
-    } catch (error) {
-      logger.error('Error in Help module:', error);
-    }
-
+    // This module only handles commands, no message processing
     return message;
-  }
-
-  async executeCommand(commandName, args, message) {
-    try {
-      const command = this.commands[commandName];
-      logger.info(`🎯 Executing help command: ${commandName} by @${message.senderUsername}`);
-      await command.handler(args, message);
-    } catch (error) {
-      logger.error(`Error executing help command ${commandName}:`, error);
-      await this.sendReply(message, `❌ Error executing command: ${error.message}`);
-    }
   }
 
   async handleHelp(args, message) {
     const query = args[0]?.toLowerCase();
     
     if (!query) {
-      // Show general help
       const helpMessage = `🚀 **Hyper Insta Help**\n\n` +
-        `Use \`.help <command>\` for specific command help\n` +
-        `Use \`.commands\` to see all available commands\n` +
-        `Use \`.modules\` to see all loaded modules\n\n` +
+        `Use \`.help <command>\` for specific help\n` +
+        `Use \`.commands\` to see all commands\n` +
+        `Use \`.modules\` to see all modules\n\n` +
         `**Quick Commands:**\n` +
         `• \`.ping\` - Check bot status\n` +
-        `• \`.status\` - Show detailed bot status\n` +
-        `• \`.help\` - Show this help message\n\n` +
-        `**Command Prefix:** \`${this.commandPrefix}\``;
+        `• \`.status\` - Show detailed status\n` +
+        `• \`.help\` - Show this help\n\n` +
+        `**Prefix:** \`${this.commandPrefix}\``;
       
       await this.sendReply(message, helpMessage);
       return;
     }
 
-    // Check if it's a specific command
-    const allCommands = this.moduleManager.getAllCommands();
-    const command = allCommands[query];
+    // Get all commands dynamically
+    const allCommands = this.getAllCommands();
+    const command = allCommands.get(query);
     
     if (command) {
       const commandHelp = `🎯 **Command: ${query}**\n\n` +
-        `📝 Description: ${command.description}\n` +
+        `📝 ${command.description}\n` +
         `💡 Usage: \`${command.usage}\`\n` +
-        `🔧 Module: ${command.module || 'Unknown'}` +
-        (command.adminOnly ? '\n⚠️ Admin only command' : '');
+        `🔧 Module: ${command.moduleName}` +
+        (command.adminOnly ? '\n⚠️ Admin only' : '');
       
       await this.sendReply(message, commandHelp);
       return;
@@ -95,17 +70,17 @@ export class HelpModule {
       return;
     }
 
-    await this.sendReply(message, `❌ Command or module '${query}' not found. Use \`.help\` to see available options.`);
+    await this.sendReply(message, `❌ '${query}' not found. Use \`.help\` for options.`);
   }
 
   async handleCommands(args, message) {
-    const allCommands = this.moduleManager.getAllCommands();
-    const commandList = Object.entries(allCommands)
+    const allCommands = this.getAllCommands();
+    const commandList = Array.from(allCommands.entries())
       .map(([name, cmd]) => `• \`.${name}\` - ${cmd.description}`)
       .join('\n');
 
-    const commandsMessage = `🎯 **Available Commands (${Object.keys(allCommands).length})**\n\n${commandList}\n\n` +
-      `Use \`.help <command>\` for detailed usage information.`;
+    const commandsMessage = `🎯 **Commands (${allCommands.size})**\n\n${commandList}\n\n` +
+      `Use \`.help <command>\` for details.`;
 
     await this.sendReply(message, commandsMessage);
   }
@@ -117,8 +92,8 @@ export class HelpModule {
       return `• **${module.name || module.constructor.name}** - ${commandCount} commands`;
     }).join('\n');
 
-    const modulesMessage = `🔌 **Loaded Modules (${modules.length})**\n\n${moduleList}\n\n` +
-      `Use \`.help <module>\` for module-specific help.`;
+    const modulesMessage = `🔌 **Modules (${modules.length})**\n\n${moduleList}\n\n` +
+      `Use \`.help <module>\` for module help.`;
 
     await this.sendReply(message, modulesMessage);
   }
@@ -135,26 +110,40 @@ export class HelpModule {
       
       helpMessage += `**Commands (${Object.keys(commands).length}):**\n${commandList}`;
     } else {
-      helpMessage += 'This module has no commands.';
+      helpMessage += 'No commands available.';
     }
 
     await this.sendReply(message, helpMessage);
   }
 
+  getAllCommands() {
+    const allCommands = new Map();
+    
+    for (const module of this.moduleManager.modules) {
+      if (module.getCommands) {
+        const commands = module.getCommands();
+        for (const [name, command] of Object.entries(commands)) {
+          allCommands.set(name.toLowerCase(), {
+            ...command,
+            moduleName: module.name || module.constructor.name
+          });
+        }
+      }
+    }
+
+    return allCommands;
+  }
+
   async sendReply(message, text) {
     try {
-      // Get the Instagram bot instance from module manager
-      const coreModule = this.moduleManager.getModule('CoreModule');
-      if (coreModule && coreModule.instagramBot && coreModule.instagramBot.sendMessage) {
-        const success = await coreModule.instagramBot.sendMessage(message.threadId, text);
-        if (!success) {
-          logger.error('Failed to send help reply via Instagram');
-        }
-      } else {
-        logger.info(`🤖 Help reply to @${message.senderUsername}: ${text}`);
+      const coreModule = this.moduleManager.getModule('core');
+      if (coreModule && coreModule.instagramBot) {
+        return await coreModule.instagramBot.sendMessage(message.threadId, text);
       }
+      return false;
     } catch (error) {
       logger.error('Error sending help reply:', error);
+      return false;
     }
   }
 
@@ -163,6 +152,6 @@ export class HelpModule {
   }
 
   async cleanup() {
-    logger.info('🧹 Help module cleaned up');
+    // Cleanup if needed
   }
 }

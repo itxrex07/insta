@@ -11,6 +11,7 @@ export const config = {
   telegram: {
     botToken: '7580382614:AAH30PW6TFmgRzbC7HUXIHQ35GpndbJOIEI',
     chatId: '-1002710686896',
+    enabled: true,
     forwardMessages: true,
     forwardMedia: true
   },

@@ -2,14 +2,14 @@ import { InstagramBot } from './core/bot.js';
 import { TelegramBridge } from './tg-bridge/bridge.js';
 import { ModuleManager } from './core/module-manager.js';
 import { logger } from './core/utils.js';
+import { config } from './config.js';
 
-// Enhanced UI for Hyper Insta
 console.clear();
 console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
 ║    🚀 HYPER INSTA - Advanced Instagram Bot                  ║
-║                                                              ║             ║
+║                                                              ║
 ║    🔧 Status: Initializing...                               ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
@@ -26,60 +26,40 @@ class HyperInsta {
 
   async initialize() {
     try {
-      this.displayStatus('🔄 Initializing Instagram Bot...');
-      
-      // Initialize Instagram connection
+      this.displayStatus('🔄 Connecting to Instagram...');
       await this.instagramBot.login();
-      this.displayStatus('✅ Instagram Bot Connected');
+      this.displayStatus('✅ Instagram Connected');
       
-      // Initialize Telegram bridge
-      this.displayStatus('🔄 Initializing Telegram Bridge...');
-      await this.telegramBridge.initialize();
-      this.displayStatus('✅ Telegram Bridge Connected');
+      if (config.telegram.enabled) {
+        this.displayStatus('🔄 Initializing Telegram...');
+        await this.telegramBridge.initialize();
+        this.displayStatus('✅ Telegram Connected');
+      }
       
-      // Load modules
       this.displayStatus('🔄 Loading Modules...');
       await this.moduleManager.loadModules();
-      this.displayStatus('✅ All Modules Loaded');
+      this.displayStatus('✅ Modules Loaded');
       
-      // Set up message handlers
-      this.displayStatus('🔄 Setting up Message Handlers...');
+      this.displayStatus('🔄 Setting up Handlers...');
       this.instagramBot.setupMessageHandlers(this.moduleManager, this.telegramBridge);
-      this.setupTelegramHandlers();
-      this.displayStatus('✅ Message Handlers Ready');
+      this.instagramBot.startMessageListener();
+      this.displayStatus('✅ Bot Ready');
       
       this.isInitialized = true;
       this.displaySuccessScreen();
       
     } catch (error) {
-      this.displayError('❌ Failed to initialize Hyper Insta', error);
+      this.displayError('❌ Initialization Failed', error);
       process.exit(1);
     }
   }
 
-  setupTelegramHandlers() {
-    // Handle Telegram replies (bidirectional)
-    this.telegramBridge.onMessage(async (reply) => {
-      try {
-        if (reply.type === 'telegram_reply') {
-          // Send reply back to Instagram
-          const success = await this.instagramBot.sendMessage(reply.threadId, reply.text);
-          if (success) {
-            logger.info(`📱⬅️📱 Sent Telegram reply to @${reply.originalSender}: ${reply.text}`);
-          }
-        }
-      } catch (error) {
-        logger.error('Error handling Telegram reply:', error);
-      }
-    });
-  }
-
   displayStatus(message) {
-    console.log(`\n🔧 ${message}`);
+    console.log(`\n${message}`);
   }
 
   displayError(message, error) {
-    console.log(`\n❌ ${message}: ${error.message}`);
+    console.log(`\n${message}: ${error.message}`);
     logger.error(message, error);
   }
 
@@ -89,40 +69,34 @@ class HyperInsta {
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║    🚀 HYPER INSTA - Successfully Initialized!               ║
+║    🚀 HYPER INSTA - READY!                                  ║
 ║                                                              ║
-║    ✅ Instagram Bot: Connected                               ║
-║    ✅ Telegram Bridge: Active                                ║
+║    ✅ Instagram: Connected                                   ║
+║    ${config.telegram.enabled ? '✅' : '❌'} Telegram: ${config.telegram.enabled ? 'Active' : 'Disabled'}                                    ║
 ║    ✅ Modules: ${this.moduleManager.modules.length.toString().padEnd(2)} Loaded                                    ║
-║    ✅ Message Handlers: Ready                                ║
 ║                                                              ║
-║    ⏱️  Startup Time: ${Math.round(uptime)}ms                              ║
+║    ⚡ Startup: ${Math.round(uptime)}ms                                    ║
 ║    🕒 Started: ${this.startTime.toLocaleTimeString()}                                ║
 ║                                                              ║
-║    🎯 Bot is now listening for messages...                  ║
-║    📱 Telegram bridge is active for replies                 ║
-║                                                              ║
-║    Press Ctrl+C to stop                                     ║
+║    🎯 Listening for messages...                             ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     `);
     
-    logger.info('🚀 Hyper Insta is fully operational!');
+    logger.info('🚀 Hyper Insta is operational!');
   }
 
   async start() {
     await this.initialize();
     
-    // Keep the bot running
     process.on('SIGINT', async () => {
-      console.log('\n\n🛑 Shutting down Hyper Insta...');
+      console.log('\n\n🛑 Shutting down...');
       await this.instagramBot.disconnect();
       await this.moduleManager.unloadModules();
-      console.log('✅ Hyper Insta stopped gracefully');
+      console.log('✅ Stopped gracefully');
       process.exit(0);
     });
 
-    // Display periodic status updates
     if (this.isInitialized) {
       setInterval(() => {
         const uptime = Math.floor((new Date() - this.startTime) / 1000);
@@ -130,12 +104,11 @@ class HyperInsta {
         const minutes = Math.floor((uptime % 3600) / 60);
         const seconds = uptime % 60;
         
-        process.stdout.write(`\r⏱️  Uptime: ${hours}h ${minutes}m ${seconds}s | 📊 Modules: ${this.moduleManager.modules.length} | 🔄 Status: Running`);
+        process.stdout.write(`\r⏱️  ${hours}h ${minutes}m ${seconds}s | 📊 ${this.moduleManager.modules.length} modules | 🟢 Running`);
       }, 1000);
     }
   }
 }
 
-// Start Hyper Insta
 const bot = new HyperInsta();
 bot.start().catch(console.error);

@@ -100,10 +100,7 @@ export class CoreModule {
   }
 
   async handlePing(args, message) {
-    const startTime = Date.now();
     await this.sendReply(message, '🚀 Hyper Insta is online and ready!');
-    const responseTime = Date.now() - startTime;
-    logger.info(`📊 Ping response time: ${responseTime}ms`);
   }
 
   async handleStatus(args, message) {
@@ -201,12 +198,14 @@ export class CoreModule {
   async sendReply(message, text) {
     try {
       if (this.instagramBot && this.instagramBot.sendMessage) {
-        await this.instagramBot.sendMessage(message.threadId, text);
+        return await this.instagramBot.sendMessage(message.threadId, text);
       } else {
         logger.info(`🤖 Reply to @${message.senderUsername}: ${text}`);
+        return false;
       }
     } catch (error) {
       logger.error('Error sending reply:', error);
+      return false;
     }
   }
 

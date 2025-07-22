@@ -14,5 +14,4 @@ async function connectDb() {
     return client.db(DB_NAME);
 }
 
-
-export { connectDb }
+export { connectDb };

@@ -1,213 +1,53 @@
 import { IgApiClient } from 'instagram-private-api';
-import { logger, fileUtils } from './utils.js';
+import { logger } from './utils.js';
 import { config } from '../config.js';
-import fs from 'fs';
-import tough from 'tough-cookie';
-import { connectDb } from '../db/index.js';
-
+import { SessionManager } from './session-manager.js';
+import { MessageHandler } from './message-handler.js';
 
 export class InstagramBot {
   constructor() {
     this.ig = new IgApiClient();
-    this.messageHandlers = [];
-    this.mediaHandlers = [];
-    this.sessionPath = './session/session.json';
+    this.sessionManager = new SessionManager(this.ig);
+    this.messageHandler = null;
     this.isRunning = false;
     this.lastMessageCheck = new Date();
-    this.db = null;
   }
 
   async login() {
-    try {
-      const username = config.instagram.username;
+    return await this.sessionManager.login();
+  }
 
-      if (!username) {
-        throw new Error('❌ Instagram username is missing from config.');
-      }
+  setupMessageHandlers(moduleManager, telegramBridge) {
+    this.messageHandler = new MessageHandler(this, moduleManager, telegramBridge);
+    
+    // Setup Instagram message listeners
+    this.onMessage(async (message) => {
+      await this.messageHandler.handleMessage(message);
+    });
 
-      this.ig.state.generateDevice(username);
+    this.onMedia(async (media) => {
+      await this.messageHandler.handleMedia(media);
+    });
 
-      // Try to load session first
-      const sessionLoaded = await this.loadSession();
-      
-      if (sessionLoaded) {
-        try {
-          await this.ig.account.currentUser();
-          logger.info('✅ Logged in using saved session');
-          this.startMessageListener();
-          return;
-        } catch (err) {
-          logger.warn('⚠️ Saved session is invalid, clearing...');
-          await this.clearSession();
+    // Setup Telegram reply handler
+    if (telegramBridge) {
+      telegramBridge.onMessage(async (reply) => {
+        if (reply.type === 'telegram_reply') {
+          const success = await this.sendMessage(reply.threadId, reply.text);
+          if (success) {
+            logger.info(`📱⬅️📱 Telegram reply sent to @${reply.originalSender}`);
+          }
         }
-      }
-
-      // If no valid session, try cookie login
-      await this.loadCookiesFromJson('./session/cookies.json');
-
-      try {
-        await this.ig.account.currentUser();
-        logger.info('✅ Logged in using cookies');
-        await this.saveSession();
-        this.startMessageListener();
-      } catch (err) {
-        logger.error('❌ Cookie login failed:', err.message);
-        throw new Error('Please provide valid Instagram credentials or session');
-      }
-
-    } catch (error) {
-      logger.error('❌ Failed to login:', error.message);
-      throw error;
-    }
-  }
-
-  async loadSession() {
-    try {
-      if (config.instagram.useMongoSession) {
-        return await this.loadSessionFromMongo();
-      } else {
-        return await this.loadSessionFromFile();
-      }
-    } catch (error) {
-      logger.warn('⚠️ Failed to load session:', error.message);
-      return false;
-    }
-  }
-
-  async loadSessionFromFile() {
-    try {
-      if (await fileUtils.pathExists(this.sessionPath)) {
-        const sessionData = await fileUtils.readJson(this.sessionPath);
-        if (sessionData && sessionData.cookies) {
-          await this.ig.state.deserialize(sessionData);
-          logger.info('📁 Session loaded from file');
-          return true;
-        }
-      }
-    } catch (error) {
-      logger.warn('⚠️ Failed to load session from file:', error.message);
-    }
-    return false;
-  }
-
-  async loadSessionFromMongo() {
-    try {
-      if (!this.db) {
-        this.db = await connectDb();
-      }
-      
-      const sessions = this.db.collection('sessions');
-      const sessionDoc = await sessions.findOne({ username: config.instagram.username });
-      
-      if (sessionDoc && sessionDoc.sessionData) {
-        await this.ig.state.deserialize(sessionDoc.sessionData);
-        logger.info('🗄️ Session loaded from MongoDB');
-        return true;
-      }
-    } catch (error) {
-      logger.warn('⚠️ Failed to load session from MongoDB:', error.message);
-    }
-    return false;
-  }
-
-  async saveSession() {
-    try {
-      const serialized = await this.ig.state.serialize();
-      delete serialized.constants;
-      
-      if (config.instagram.useMongoSession) {
-        await this.saveSessionToMongo(serialized);
-      } else {
-        await this.saveSessionToFile(serialized);
-      }
-      
-      logger.info('💾 Session saved successfully');
-    } catch (error) {
-      logger.warn('⚠️ Failed to save session:', error.message);
-    }
-  }
-
-  async saveSessionToFile(sessionData) {
-    await fileUtils.ensureDir('./session');
-    await fileUtils.writeJson(this.sessionPath, sessionData);
-  }
-
-  async saveSessionToMongo(sessionData) {
-    try {
-      if (!this.db) {
-        this.db = await connectDb();
-      }
-      
-      const sessions = this.db.collection('sessions');
-      await sessions.replaceOne(
-        { username: config.instagram.username },
-        {
-          username: config.instagram.username,
-          sessionData: sessionData,
-          updatedAt: new Date()
-        },
-        { upsert: true }
-      );
-    } catch (error) {
-      logger.error('❌ Failed to save session to MongoDB:', error.message);
-    }
-  }
-
-  async clearSession() {
-    try {
-      if (config.instagram.useMongoSession) {
-        if (!this.db) {
-          this.db = await connectDb();
-        }
-        const sessions = this.db.collection('sessions');
-        await sessions.deleteOne({ username: config.instagram.username });
-        logger.info('🗑️ Session cleared from MongoDB');
-      } else {
-        if (await fileUtils.pathExists(this.sessionPath)) {
-          await fs.promises.unlink(this.sessionPath);
-          logger.info('🗑️ Session file deleted');
-        }
-      }
-    } catch (error) {
-      logger.warn('⚠️ Failed to clear session:', error.message);
-    }
-  }
-
-async loadCookiesFromJson(path = './session/cookies.json') {
-  try {
-    const raw = fs.readFileSync(path, 'utf-8');
-    const cookies = JSON.parse(raw);
-
-    for (const cookie of cookies) {
-      const toughCookie = new tough.Cookie({
-        key: cookie.name,
-        value: cookie.value,
-        domain: cookie.domain.replace(/^\./, ''),
-        path: cookie.path,
-        secure: cookie.secure,
-        httpOnly: cookie.httpOnly,
       });
-
-      await this.ig.state.cookieJar.setCookie(
-        toughCookie.toString(),
-        `https://${cookie.domain}${cookie.path}`
-      );
     }
-
-    logger.info('🍪 Loaded Instagram cookies from file');
-  } catch (error) {
-    logger.error('❌ Failed to load cookies:', error.message);
-    throw error;
   }
-}
 
   startMessageListener() {
     if (this.isRunning) return;
     
     this.isRunning = true;
-    logger.info('👂 Started message listener');
+    logger.info('👂 Message listener started');
     
-    // Check for messages every 10 seconds to avoid rate limiting
     setInterval(async () => {
       if (this.isRunning) {
         try {
@@ -215,7 +55,6 @@ async loadCookiesFromJson(path = './session/cookies.json') {
         } catch (error) {
           logger.error('❌ Error checking messages:', error.message);
           
-          // If session expired, try to re-login
           if (error.message.includes('login_required') || error.message.includes('401')) {
             logger.warn('🔄 Session expired, attempting re-login...');
             try {
@@ -231,20 +70,15 @@ async loadCookiesFromJson(path = './session/cookies.json') {
 
   async checkForNewMessages() {
     try {
-      // Get direct inbox
       const inboxFeed = this.ig.feed.directInbox();
       const inbox = await inboxFeed.items();
       
-      if (!inbox || inbox.length === 0) {
-        logger.debug('📭 No messages in inbox');
-        return;
-      }
+      if (!inbox || inbox.length === 0) return;
 
-      // Check each thread for new messages
-      for (const thread of inbox.slice(0, 5)) { // Limit to first 5 threads to avoid rate limiting
+      for (const thread of inbox.slice(0, 5)) {
         try {
           await this.checkThreadMessages(thread);
-          await this.delay(1000); // Delay between thread checks
+          await this.delay(500); // Reduced delay for better performance
         } catch (error) {
           logger.error(`❌ Error checking thread ${thread.thread_id}:`, error.message);
         }
@@ -263,10 +97,8 @@ async loadCookiesFromJson(path = './session/cookies.json') {
       });
       
       const messages = await threadFeed.items();
-      
       if (!messages || messages.length === 0) return;
 
-      // Check only the latest message to avoid processing old messages
       const latestMessage = messages[0];
       
       if (this.isNewMessage(latestMessage)) {
@@ -279,7 +111,6 @@ async loadCookiesFromJson(path = './session/cookies.json') {
   }
 
   isNewMessage(message) {
-    // Check if message is newer than our last check
     const messageTime = new Date(message.timestamp / 1000);
     const isNew = messageTime > this.lastMessageCheck;
     
@@ -292,7 +123,6 @@ async loadCookiesFromJson(path = './session/cookies.json') {
 
   async handleMessage(message, thread) {
     try {
-      // Get sender info
       const sender = thread.users.find(u => u.pk.toString() === message.user_id.toString());
       
       const processedMessage = {
@@ -300,6 +130,7 @@ async loadCookiesFromJson(path = './session/cookies.json') {
         text: message.text || '',
         sender: message.user_id,
         senderUsername: sender?.username || 'Unknown',
+        senderDisplayName: sender?.full_name || sender?.username || 'Unknown',
         timestamp: new Date(message.timestamp / 1000),
         threadId: thread.thread_id,
         threadTitle: thread.thread_title || 'Direct Message',
@@ -307,7 +138,6 @@ async loadCookiesFromJson(path = './session/cookies.json') {
         shouldForward: true
       };
 
-      // Handle media messages
       if (message.media) {
         processedMessage.media = {
           type: message.media.media_type === 1 ? 'photo' : 'video',
@@ -315,17 +145,15 @@ async loadCookiesFromJson(path = './session/cookies.json') {
                message.media.video_versions?.[0]?.url
         };
         
-        logger.info(`📸 Received ${processedMessage.media.type} from @${processedMessage.senderUsername}`);
+        logger.info(`📸 ${processedMessage.media.type} from @${processedMessage.senderUsername}`);
         
-        // Notify media handlers
         for (const handler of this.mediaHandlers) {
           await handler(processedMessage);
         }
       }
 
-      logger.info(`💬 New message from @${processedMessage.senderUsername}: ${processedMessage.text}`);
+      logger.info(`💬 @${processedMessage.senderUsername}: ${processedMessage.text}`);
 
-      // Notify message handlers
       for (const handler of this.messageHandlers) {
         await handler(processedMessage);
       }
@@ -336,17 +164,18 @@ async loadCookiesFromJson(path = './session/cookies.json') {
   }
 
   onMessage(handler) {
+    if (!this.messageHandlers) this.messageHandlers = [];
     this.messageHandlers.push(handler);
   }
 
   onMedia(handler) {
+    if (!this.mediaHandlers) this.mediaHandlers = [];
     this.mediaHandlers.push(handler);
   }
 
   async sendMessage(threadId, text) {
     try {
       await this.ig.entity.directThread(threadId).broadcastText(text);
-      logger.info(`📤 Sent message to thread ${threadId}: ${text}`);
       return true;
     } catch (error) {
       logger.error('❌ Error sending message:', error.message);
@@ -354,42 +183,12 @@ async loadCookiesFromJson(path = './session/cookies.json') {
     }
   }
 
-  // Setup message handlers - moved from index.js
-  setupMessageHandlers(moduleManager, telegramBridge) {
-    // Handle incoming Instagram messages
-    this.onMessage(async (message) => {
-      try {
-        // Process through modules
-        const processedMessage = await moduleManager.processMessage(message);
-        
-        // Forward to Telegram if enabled
-        if (processedMessage.shouldForward && telegramBridge) {
-          await telegramBridge.forwardMessage(processedMessage);
-        }
-      } catch (error) {
-        logger.error('Error processing message:', error);
-      }
-    });
-
-    // Handle media messages
-    this.onMedia(async (media) => {
-      try {
-        if (telegramBridge) {
-          await telegramBridge.forwardMedia(media);
-        }
-      } catch (error) {
-        logger.error('Error forwarding media:', error);
-      }
-    });
-  }
-
   async delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   async disconnect() {
-    logger.info('🔌 Disconnecting from Instagram...');
     this.isRunning = false;
-    await this.saveSession();
+    await this.sessionManager.saveSession();
   }
 }

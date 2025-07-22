@@ -6,6 +6,7 @@ import { config } from '../config.js';
 export class TelegramBridge {
   constructor() {
     this.bot = null;
+    this.enabled = config.telegram.enabled;
     this.chatId = config.telegram.chatId;
     this.messageHandlers = [];
     this.replyToMessageMap = new Map(); // Map Telegram message IDs to Instagram thread info
@@ -13,8 +14,7 @@ export class TelegramBridge {
 
   async initialize() {
     try {
-      if (!config.telegram.botToken) {
-        logger.warn('⚠️ Telegram bot token not provided, skipping Telegram integration');
+      if (!this.enabled || !config.telegram.botToken) {
         return;
       }
 
@@ -22,13 +22,13 @@ export class TelegramBridge {
       
       // Test the connection
       const me = await this.bot.getMe();
-      logger.info(`✅ Hyper Insta connected to Telegram as @${me.username}`);
+      logger.info(`✅ Connected to Telegram as @${me.username}`);
       
       // Set up webhook or polling for bidirectional communication
       await this.setupBidirectionalBridge();
       
     } catch (error) {
-      logger.error('❌ Failed to initialize Hyper Insta Telegram bridge:', error.message);
+      logger.error('❌ Failed to initialize Telegram bridge:', error.message);
       throw error;
     }
   }
@@ -88,7 +88,7 @@ export class TelegramBridge {
     this.messageHandlers.push(handler);
   }
   async forwardMessage(message) {
-    if (!this.bot || !config.telegram.forwardMessages) return;
+    if (!this.enabled || !this.bot || !config.telegram.forwardMessages) return;
 
     try {
       const formattedMessage = this.formatMessage(message);
@@ -103,7 +103,7 @@ export class TelegramBridge {
         originalSender: message.senderUsername
       });
       
-      logger.info(`📨 Hyper Insta forwarded message from @${message.senderUsername} to Telegram`);
+      logger.info(`📨 Forwarded to Telegram: @${message.senderUsername}`);
       
     } catch (error) {
       logger.error('Error forwarding message to Telegram:', error);
@@ -111,7 +111,7 @@ export class TelegramBridge {
   }
 
   async forwardMedia(message) {
-    if (!this.bot || !config.telegram.forwardMedia || !message.media) return;
+    if (!this.enabled || !this.bot || !config.telegram.forwardMedia || !message.media) return;
 
     try {
       const caption = this.formatMessage(message);
@@ -137,7 +137,7 @@ export class TelegramBridge {
         });
       }
       
-      logger.info(`🖼️ Hyper Insta forwarded ${message.media.type} from @${message.senderUsername} to Telegram`);
+      logger.info(`🖼️ Forwarded ${message.media.type} to Telegram: @${message.senderUsername}`);
       
     } catch (error) {
       logger.error('Error forwarding media to Telegram:', error);
@@ -150,17 +150,17 @@ export class TelegramBridge {
     const username = message.senderUsername;
     const text = message.text || '[Media]';
     
-    return `🚀 *Hyper Insta*\n\n` +
+    return `🚀 *Hyper Insta*\n` +
            `👤 ${displayName}\n` +
-           `@${username}\n\n` +
+           `@${username}\n` +
            `${text}`;
   }
 
   async sendNotification(text) {
-    if (!this.bot) return;
+    if (!this.enabled || !this.bot) return;
 
     try {
-      await this.bot.sendMessage(this.chatId, `🚀 *Hyper Insta Notification*\n\n${text}`, {
+      await this.bot.sendMessage(this.chatId, `🚀 *Hyper Insta*\n${text}`, {
         parse_mode: 'Markdown'
       });
     } catch (error) {
