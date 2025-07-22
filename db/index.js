@@ -1,9 +1,1 @@
-@@ .. @@
- async function connectDb() {
-   try {
-     if (!client.topology?.isConnected()) {
-       await client.connect();
-+      logger.info('✅ MongoDB connected');
-     }
-     return client.db(DB_NAME);
-   } catch (error) {
+{"code":"rate-limited","message":"You have hit the rate limit. Please upgrade to keep chatting.","providerLimitHit":false,"isRetryable":true}
