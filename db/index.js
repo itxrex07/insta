@@ -14,6 +14,5 @@ async function connectDb() {
     return client.db(DB_NAME);
 }
 
-module.exports = { connectDb };
 
 export { connectDb }
