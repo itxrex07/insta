@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import axios from 'axios';
-import { logger, fileUtils } from '../core/utils.js';
+import { logger, fileUtils } from '../utils/utils.js';
 import { config } from '../config.js';
 
 export class TelegramBridge {
