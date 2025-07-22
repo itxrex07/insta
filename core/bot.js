@@ -143,7 +143,7 @@ export class InstagramBot {
 
   async disconnect() {
     this.isRunning = false;
-    await this.sessionManager.saveSession();
+    await this.sessionManager.saveCookies(await this.sessionManager.serializeCookies());
     await this.moduleManager.cleanup();
   }
 }
