@@ -77,17 +77,7 @@ class HyperInsta {
       process.exit(0);
     });
 
-    // Live status updates
-    setInterval(() => {
-      const uptime = Math.floor((Date.now() - this.startTime) / 1000);
-      const hours = Math.floor(uptime / 3600);
-      const minutes = Math.floor((uptime % 3600) / 60);
-      const seconds = uptime % 60;
-      
-      process.stdout.write(`\r⏱️  ${hours}h ${minutes}m ${seconds}s | 🔌 ${this.moduleManager.modules.length} modules | 🟢 Online`);
-    }, 1000);
-  }
-}
+  
 
 const bot = new HyperInsta();
 bot.start().catch(console.error);
