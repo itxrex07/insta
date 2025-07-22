@@ -1,5 +1,5 @@
 import { BaseModule } from '../core/base-module.js';
-import { logger } from '../core/utils.js';
+import { logger } from '../utils/utils.js';
 import { config } from '../config.js';
 import os from 'os';
 
