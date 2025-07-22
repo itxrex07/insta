@@ -1,9 +1,9 @@
 import { IgApiClient } from 'instagram-private-api';
 import { logger, fileUtils } from './utils.js';
 import { config } from '../config.js';
-import readline from 'readline';
 import fs from 'fs';
 import tough from 'tough-cookie';
+import { connectDb } from '../db/index.js';
 
 
 export class InstagramBot {
@@ -11,39 +11,169 @@ export class InstagramBot {
     this.ig = new IgApiClient();
     this.messageHandlers = [];
     this.mediaHandlers = [];
-    this.sessionPath = config.instagram.sessionPath;
+    this.sessionPath = './session/session.json';
     this.isRunning = false;
     this.lastMessageCheck = new Date();
+    this.db = null;
   }
 
-async login() {
-  try {
-    const username = config.instagram.username;
-
-    if (!username) {
-      throw new Error('❌ INSTAGRAM_USERNAME is missing from config or environment.');
-    }
-
-    this.ig.state.generateDevice(username);
-
-    // Load cookies from file
-    await this.loadCookiesFromJson('./cookies.json');
-
+  async login() {
     try {
-      await this.ig.account.currentUser(); // test session validity
-      logger.info('✅ Logged in using saved cookies');
-      this.startMessageListener();
-    } catch (err) {
-      logger.error('❌ Invalid or expired cookies:', err.message);
-      throw err;
-    }
-  } catch (error) {
-    logger.error('❌ Failed to initialize bot:', error.message);
-    throw error;
-  }
-}
+      const username = config.instagram.username;
 
-async loadCookiesFromJson(path = './cookies.json') {
+      if (!username) {
+        throw new Error('❌ Instagram username is missing from config.');
+      }
+
+      this.ig.state.generateDevice(username);
+
+      // Try to load session first
+      const sessionLoaded = await this.loadSession();
+      
+      if (sessionLoaded) {
+        try {
+          await this.ig.account.currentUser();
+          logger.info('✅ Logged in using saved session');
+          this.startMessageListener();
+          return;
+        } catch (err) {
+          logger.warn('⚠️ Saved session is invalid, clearing...');
+          await this.clearSession();
+        }
+      }
+
+      // If no valid session, try cookie login
+      await this.loadCookiesFromJson('./session/cookies.json');
+
+      try {
+        await this.ig.account.currentUser();
+        logger.info('✅ Logged in using cookies');
+        await this.saveSession();
+        this.startMessageListener();
+      } catch (err) {
+        logger.error('❌ Cookie login failed:', err.message);
+        throw new Error('Please provide valid Instagram credentials or session');
+      }
+
+    } catch (error) {
+      logger.error('❌ Failed to login:', error.message);
+      throw error;
+    }
+  }
+
+  async loadSession() {
+    try {
+      if (config.instagram.useMongoSession) {
+        return await this.loadSessionFromMongo();
+      } else {
+        return await this.loadSessionFromFile();
+      }
+    } catch (error) {
+      logger.warn('⚠️ Failed to load session:', error.message);
+      return false;
+    }
+  }
+
+  async loadSessionFromFile() {
+    try {
+      if (await fileUtils.pathExists(this.sessionPath)) {
+        const sessionData = await fileUtils.readJson(this.sessionPath);
+        if (sessionData && sessionData.cookies) {
+          await this.ig.state.deserialize(sessionData);
+          logger.info('📁 Session loaded from file');
+          return true;
+        }
+      }
+    } catch (error) {
+      logger.warn('⚠️ Failed to load session from file:', error.message);
+    }
+    return false;
+  }
+
+  async loadSessionFromMongo() {
+    try {
+      if (!this.db) {
+        this.db = await connectDb();
+      }
+      
+      const sessions = this.db.collection('sessions');
+      const sessionDoc = await sessions.findOne({ username: config.instagram.username });
+      
+      if (sessionDoc && sessionDoc.sessionData) {
+        await this.ig.state.deserialize(sessionDoc.sessionData);
+        logger.info('🗄️ Session loaded from MongoDB');
+        return true;
+      }
+    } catch (error) {
+      logger.warn('⚠️ Failed to load session from MongoDB:', error.message);
+    }
+    return false;
+  }
+
+  async saveSession() {
+    try {
+      const serialized = await this.ig.state.serialize();
+      delete serialized.constants;
+      
+      if (config.instagram.useMongoSession) {
+        await this.saveSessionToMongo(serialized);
+      } else {
+        await this.saveSessionToFile(serialized);
+      }
+      
+      logger.info('💾 Session saved successfully');
+    } catch (error) {
+      logger.warn('⚠️ Failed to save session:', error.message);
+    }
+  }
+
+  async saveSessionToFile(sessionData) {
+    await fileUtils.ensureDir('./session');
+    await fileUtils.writeJson(this.sessionPath, sessionData);
+  }
+
+  async saveSessionToMongo(sessionData) {
+    try {
+      if (!this.db) {
+        this.db = await connectDb();
+      }
+      
+      const sessions = this.db.collection('sessions');
+      await sessions.replaceOne(
+        { username: config.instagram.username },
+        {
+          username: config.instagram.username,
+          sessionData: sessionData,
+          updatedAt: new Date()
+        },
+        { upsert: true }
+      );
+    } catch (error) {
+      logger.error('❌ Failed to save session to MongoDB:', error.message);
+    }
+  }
+
+  async clearSession() {
+    try {
+      if (config.instagram.useMongoSession) {
+        if (!this.db) {
+          this.db = await connectDb();
+        }
+        const sessions = this.db.collection('sessions');
+        await sessions.deleteOne({ username: config.instagram.username });
+        logger.info('🗑️ Session cleared from MongoDB');
+      } else {
+        if (await fileUtils.pathExists(this.sessionPath)) {
+          await fs.promises.unlink(this.sessionPath);
+          logger.info('🗑️ Session file deleted');
+        }
+      }
+    } catch (error) {
+      logger.warn('⚠️ Failed to clear session:', error.message);
+    }
+  }
+
+async loadCookiesFromJson(path = './session/cookies.json') {
   try {
     const raw = fs.readFileSync(path, 'utf-8');
     const cookies = JSON.parse(raw);
@@ -70,32 +200,6 @@ async loadCookiesFromJson(path = './cookies.json') {
     throw error;
   }
 }
-
-  async loadSession() {
-    try {
-      if (await fileUtils.pathExists(this.sessionPath)) {
-        const sessionData = await fileUtils.readJson(this.sessionPath);
-        if (sessionData && sessionData.cookies) {
-          await this.ig.state.deserialize(sessionData);
-          return true;
-        }
-      }
-    } catch (error) {
-      logger.warn('⚠️ Failed to load session:', error.message);
-    }
-    return false;
-  }
-
-  async saveSession() {
-    try {
-      const serialized = await this.ig.state.serialize();
-      delete serialized.constants; // Remove unnecessary data
-      await fileUtils.writeJson(this.sessionPath, serialized);
-      logger.info('💾 Session saved successfully');
-    } catch (error) {
-      logger.warn('⚠️ Failed to save session:', error.message);
-    }
-  }
 
   startMessageListener() {
     if (this.isRunning) return;
@@ -243,10 +347,40 @@ async loadCookiesFromJson(path = './cookies.json') {
     try {
       await this.ig.entity.directThread(threadId).broadcastText(text);
       logger.info(`📤 Sent message to thread ${threadId}: ${text}`);
+      return true;
     } catch (error) {
       logger.error('❌ Error sending message:', error.message);
-      throw error;
+      return false;
     }
+  }
+
+  // Setup message handlers - moved from index.js
+  setupMessageHandlers(moduleManager, telegramBridge) {
+    // Handle incoming Instagram messages
+    this.onMessage(async (message) => {
+      try {
+        // Process through modules
+        const processedMessage = await moduleManager.processMessage(message);
+        
+        // Forward to Telegram if enabled
+        if (processedMessage.shouldForward && telegramBridge) {
+          await telegramBridge.forwardMessage(processedMessage);
+        }
+      } catch (error) {
+        logger.error('Error processing message:', error);
+      }
+    });
+
+    // Handle media messages
+    this.onMedia(async (media) => {
+      try {
+        if (telegramBridge) {
+          await telegramBridge.forwardMedia(media);
+        }
+      } catch (error) {
+        logger.error('Error forwarding media:', error);
+      }
+    });
   }
 
   async delay(ms) {

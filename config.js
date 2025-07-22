@@ -1,22 +1,32 @@
 export const config = {
   instagram: {
-    username: process.env.INSTAGRAM_USERNAME,
-    password: process.env.INSTAGRAM_PASSWORD,
-    sessionPath: './session/instagram_session.json',
+    username: 'itxrey', // Your Instagram username
+    password: 'your_instagram_password', // Your Instagram password
+    sessionPath: './session/session.json',
     messageCheckInterval: 10000, // Check for messages every 10 seconds (reduced to avoid rate limiting)
-    maxRetries: 3
+    maxRetries: 3,
+    useMongoSession: true // Set to false to use file-based sessions
   },
   
   telegram: {
-    botToken: process.env.TELEGRAM_BOT_TOKEN,
-    chatId: process.env.TELEGRAM_CHAT_ID,
-    forwardMessages: process.env.FORWARD_MESSAGES !== 'false',
-    forwardMedia: process.env.FORWARD_MEDIA !== 'false'
+    botToken: '7580382614:AAH30PW6TFmgRzbC7HUXIHQ35GpndbJOIEI',
+    chatId: '-1002710686896',
+    forwardMessages: true,
+    forwardMedia: true
+  },
+  
+  mongo: {
+    uri: 'mongodb://localhost:27017',
+    dbName: 'hyper_insta',
+    options: {
+      useNewUrlParser: true,
+      useUnifiedTopology: true
+    }
   },
   
   modules: {
     autoReply: {
-      enabled: process.env.AUTO_REPLY_ENABLED === 'true',
+      enabled: false,
       greetings: ['hello', 'hi', 'hey', 'good morning', 'good evening'],
       responses: [
         'Hello! Thanks for your message.',
@@ -26,20 +36,24 @@ export const config = {
     },
     
     messageFilter: {
-      enabled: process.env.MESSAGE_FILTER_ENABLED === 'true',
-      blockedUsers: (process.env.BLOCKED_USERS || '').split(',').filter(Boolean),
+      enabled: true,
+      blockedUsers: [],
       spamKeywords: ['spam', 'promotion', 'offer', 'deal', 'discount']
     },
     
     messageLogger: {
-      enabled: process.env.MESSAGE_LOGGER_ENABLED !== 'false',
+      enabled: true,
       logPath: './logs/messages.json',
       maxLogSize: 1000 // Maximum number of messages to keep
     }
   },
   
+  admin: {
+    users: ['itxrey', 'iarshman'] // Admin usernames
+  },
+  
   app: {
-    logLevel: process.env.LOG_LEVEL || 'info',
-    environment: process.env.NODE_ENV || 'development'
+    logLevel: 'info',
+    environment: 'development'
   }
 };

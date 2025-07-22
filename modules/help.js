@@ -146,7 +146,10 @@ export class HelpModule {
       // Get the Instagram bot instance from module manager
       const coreModule = this.moduleManager.getModule('CoreModule');
       if (coreModule && coreModule.instagramBot && coreModule.instagramBot.sendMessage) {
-        await coreModule.instagramBot.sendMessage(message.threadId, text);
+        const success = await coreModule.instagramBot.sendMessage(message.threadId, text);
+        if (!success) {
+          logger.error('Failed to send help reply via Instagram');
+        }
       } else {
         logger.info(`🤖 Help reply to @${message.senderUsername}: ${text}`);
       }

@@ -240,8 +240,7 @@ export class CoreModule {
   }
 
   isAdmin(username) {
-    const adminUsers = (process.env.ADMIN_USERS || '').split(',').filter(Boolean);
-    return adminUsers.includes(username.toLowerCase());
+    return config.admin.users.includes(username.toLowerCase());
   }
 
   addToLogBuffer(logEntry) {
