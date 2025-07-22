@@ -26,21 +26,7 @@ export const config = {
   },
   
   modules: {
-    autoReply: {
-      enabled: true,
-      greetings: ['hello', 'hi', 'hey', 'good morning', 'good evening'],
-      responses: [
-        'Hello! Thanks for your message.',
-        'Hi there! I\'ll get back to you soon.',
-        'Hey! Thanks for reaching out.'
-      ]
-    },
-    
-    messageLogger: {
-      enabled: true,
-      logPath: './logs/messages.json',
-      maxLogSize: 1000 // Maximum number of messages to keep
-    }
+
   },
   
   admin: {
