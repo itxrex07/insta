@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { MongoClient } from 'mongodb';
-import { logger } from '../core/utils.js';
+import { logger } from './utils.js';
 
 const MONGO_URI = config.mongo.uri;
 const DB_NAME = config.mongo.dbName;
