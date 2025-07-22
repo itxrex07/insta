@@ -7,7 +7,6 @@ import { connectDb } from '../utils/db.js';
 export class SessionManager {
   constructor(ig) {
     this.ig = ig;
-    this.sessionPath = './session/session.json';
     this.cookiesPath = './session/cookies.json';
     this.db = null;
   }
@@ -21,31 +20,21 @@ export class SessionManager {
 
       this.ig.state.generateDevice(username);
 
-      // Try to load session first
-      const sessionLoaded = await this.loadSession();
+      // Try to load cookies from DB first, then from file
+      const cookiesLoaded = await this.loadCookies();
       
-      if (sessionLoaded) {
+      if (cookiesLoaded) {
         try {
           await this.ig.account.currentUser();
-          logger.info('✅ Logged in using saved session');
+          logger.info('✅ Logged in using cookies');
           return true;
         } catch (err) {
-          logger.warn('⚠️ Saved session is invalid, clearing...');
-          await this.clearSession();
+          logger.warn('⚠️ Cookies are invalid, clearing...');
+          await this.clearCookies();
+          throw new Error('Invalid cookies - please upload new cookies');
         }
-      }
-
-      // Try cookie login
-      await this.loadCookiesFromJson();
-
-      try {
-        await this.ig.account.currentUser();
-        logger.info('✅ Logged in using cookies');
-        await this.saveSession();
-        return true;
-      } catch (err) {
-        logger.error('❌ Cookie login failed:', err.message);
-        throw new Error('Please provide valid Instagram credentials or session');
+      } else {
+        throw new Error('No cookies found - please upload cookies via Telegram bot');
       }
 
     } catch (error) {
@@ -54,133 +43,163 @@ export class SessionManager {
     }
   }
 
-  async loadSession() {
+  async loadCookies() {
     try {
-      if (config.instagram.useMongoSession) {
-        return await this.loadSessionFromMongo();
-      } else {
-        return await this.loadSessionFromFile();
+      // Try loading from DB first
+      if (await this.loadCookiesFromDb()) {
+        return true;
       }
+      
+      // Fallback to file
+      if (await this.loadCookiesFromFile()) {
+        // Save to DB for future use
+        await this.saveCookiesToDb();
+        return true;
+      }
+      
+      return false;
     } catch (error) {
+      logger.error('Error loading cookies:', error.message);
       return false;
     }
   }
 
-  async loadSessionFromFile() {
-    try {
-      if (await fileUtils.pathExists(this.sessionPath)) {
-        const sessionData = await fileUtils.readJson(this.sessionPath);
-        if (sessionData && sessionData.cookies) {
-          await this.ig.state.deserialize(sessionData);
-          return true;
-        }
-      }
-    } catch (error) {
-      // Silent fail
-    }
-    return false;
-  }
-
-  async loadSessionFromMongo() {
+  async loadCookiesFromDb() {
     try {
       if (!this.db) {
         this.db = await connectDb();
       }
       
-      const sessions = this.db.collection('sessions');
-      const sessionDoc = await sessions.findOne({ username: config.instagram.username });
+      const cookies = this.db.collection('cookies');
+      const cookieDoc = await cookies.findOne({ username: config.instagram.username });
       
-      if (sessionDoc && sessionDoc.sessionData) {
-        await this.ig.state.deserialize(sessionDoc.sessionData);
+      if (cookieDoc && cookieDoc.cookieData) {
+        await this.applyCookies(cookieDoc.cookieData);
+        logger.info('✅ Loaded cookies from database');
         return true;
       }
     } catch (error) {
-      // Silent fail
+      logger.error('Error loading cookies from DB:', error.message);
     }
     return false;
   }
 
-  async saveSession() {
+  async loadCookiesFromFile() {
     try {
-      const serialized = await this.ig.state.serialize();
-      delete serialized.constants;
-      
-      if (config.instagram.useMongoSession) {
-        await this.saveSessionToMongo(serialized);
-      } else {
-        await this.saveSessionToFile(serialized);
+      if (await fileUtils.pathExists(this.cookiesPath)) {
+        const cookieData = JSON.parse(fs.readFileSync(this.cookiesPath, 'utf-8'));
+        await this.applyCookies(cookieData);
+        logger.info('✅ Loaded cookies from file');
+        return true;
       }
     } catch (error) {
-      // Silent fail
+      logger.error('Error loading cookies from file:', error.message);
+    }
+    return false;
+  }
+
+  async applyCookies(cookieData) {
+    for (const cookie of cookieData) {
+      const toughCookie = new tough.Cookie({
+        key: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain.replace(/^\./, ''),
+        path: cookie.path,
+        secure: cookie.secure,
+        httpOnly: cookie.httpOnly,
+      });
+
+      await this.ig.state.cookieJar.setCookie(
+        toughCookie.toString(),
+        `https://${cookie.domain}${cookie.path}`
+      );
     }
   }
 
-  async saveSessionToFile(sessionData) {
-    await fileUtils.ensureDir('./session');
-    await fileUtils.writeJson(this.sessionPath, sessionData);
-  }
-
-  async saveSessionToMongo(sessionData) {
+  async saveCookiesToDb() {
     try {
       if (!this.db) {
         this.db = await connectDb();
       }
-      
-      const sessions = this.db.collection('sessions');
-      await sessions.replaceOne(
-        { username: config.instagram.username },
-        {
-          username: config.instagram.username,
-          sessionData: sessionData,
-          updatedAt: new Date()
-        },
-        { upsert: true }
-      );
-    } catch (error) {
-      // Silent fail
-    }
-  }
 
-  async clearSession() {
-    try {
-      if (config.instagram.useMongoSession) {
-        if (!this.db) {
-          this.db = await connectDb();
-        }
-        const sessions = this.db.collection('sessions');
-        await sessions.deleteOne({ username: config.instagram.username });
-      } else {
-        if (await fileUtils.pathExists(this.sessionPath)) {
-          await fs.promises.unlink(this.sessionPath);
-        }
-      }
-    } catch (error) {
-      // Silent fail
-    }
-  }
-
-  async loadCookiesFromJson() {
-    try {
-      const raw = fs.readFileSync(this.cookiesPath, 'utf-8');
-      const cookies = JSON.parse(raw);
-
-      for (const cookie of cookies) {
-        const toughCookie = new tough.Cookie({
-          key: cookie.name,
-          value: cookie.value,
-          domain: cookie.domain.replace(/^\./, ''),
-          path: cookie.path,
-          secure: cookie.secure,
-          httpOnly: cookie.httpOnly,
-        });
-
-        await this.ig.state.cookieJar.setCookie(
-          toughCookie.toString(),
-          `https://${cookie.domain}${cookie.path}`
+      // Read cookies from file
+      if (await fileUtils.pathExists(this.cookiesPath)) {
+        const cookieData = JSON.parse(fs.readFileSync(this.cookiesPath, 'utf-8'));
+        
+        const cookies = this.db.collection('cookies');
+        await cookies.replaceOne(
+          { username: config.instagram.username },
+          {
+            username: config.instagram.username,
+            cookieData: cookieData,
+            updatedAt: new Date()
+          },
+          { upsert: true }
         );
+        
+        logger.info('✅ Cookies saved to database');
       }
     } catch (error) {
-      throw error;
+      logger.error('Error saving cookies to DB:', error.message);
+    }
+  }
+
+  async uploadCookies(cookieData) {
+    try {
+      // Ensure session directory exists
+      await fileUtils.ensureDir('./session');
+      
+      // Save to file
+      fs.writeFileSync(this.cookiesPath, JSON.stringify(cookieData, null, 2));
+      
+      // Save to database
+      await this.saveCookiesToDb();
+      
+      logger.info('✅ Cookies uploaded and saved');
+      return true;
+    } catch (error) {
+      logger.error('Error uploading cookies:', error.message);
+      return false;
+    }
+  }
+
+  async clearCookies() {
+    try {
+      // Clear from database
+      if (!this.db) {
+        this.db = await connectDb();
+      }
+      const cookies = this.db.collection('cookies');
+      await cookies.deleteOne({ username: config.instagram.username });
+      
+      // Clear from file
+      if (await fileUtils.pathExists(this.cookiesPath)) {
+        await fs.promises.unlink(this.cookiesPath);
+      }
+      
+      logger.info('✅ Cookies cleared');
+    } catch (error) {
+      logger.error('Error clearing cookies:', error.message);
+    }
+  }
+
+  async hasCookies() {
+    try {
+      // Check DB first
+      if (!this.db) {
+        this.db = await connectDb();
+      }
+      const cookies = this.db.collection('cookies');
+      const cookieDoc = await cookies.findOne({ username: config.instagram.username });
+      
+      if (cookieDoc && cookieDoc.cookieData) {
+        return true;
+      }
+      
+      // Check file
+      return await fileUtils.pathExists(this.cookiesPath);
+    } catch (error) {
+      return false;
     }
   }
 }
