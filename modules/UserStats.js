@@ -1,4 +1,4 @@
-import { logger, fileUtils } from '../utils.js';
+import { logger, fileUtils } from '../core/utils.js';
 
 export class UserStatsModule {
   constructor() {
