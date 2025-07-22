@@ -5,108 +5,87 @@ import { logger } from './core/utils.js';
 import { config } from './config.js';
 
 console.clear();
-console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║    🚀 HYPER INSTA - Advanced Instagram Bot                  ║
-║                                                              ║
-║    🔧 Status: Initializing...                               ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-`);
 
 class HyperInsta {
   constructor() {
     this.startTime = new Date();
     this.instagramBot = new InstagramBot();
-    this.telegramBridge = new TelegramBridge();
+    this.telegramBridge = config.telegram.enabled ? new TelegramBridge() : null;
     this.moduleManager = new ModuleManager(this.instagramBot, this.telegramBridge);
-    this.isInitialized = false;
   }
 
   async initialize() {
     try {
-      this.displayStatus('🔄 Connecting to Instagram...');
-      await this.instagramBot.login();
-      this.displayStatus('✅ Instagram Connected');
+      console.log('🚀 Hyper Insta - Starting...\n');
       
-      if (config.telegram.enabled) {
-        this.displayStatus('🔄 Initializing Telegram...');
+      console.log('📱 Connecting to Instagram...');
+      await this.instagramBot.login();
+      console.log('✅ Instagram connected\n');
+      
+      if (this.telegramBridge) {
+        console.log('📨 Initializing Telegram...');
         await this.telegramBridge.initialize();
-        this.displayStatus('✅ Telegram Connected');
+        console.log('✅ Telegram connected\n');
       }
       
-      this.displayStatus('🔄 Loading Modules...');
+      console.log('🔌 Loading modules...');
       await this.moduleManager.loadModules();
-      this.displayStatus('✅ Modules Loaded');
+      console.log(`✅ ${this.moduleManager.modules.length} modules loaded\n`);
       
-      this.displayStatus('🔄 Setting up Handlers...');
+      console.log('⚡ Setting up handlers...');
       this.instagramBot.setupMessageHandlers(this.moduleManager, this.telegramBridge);
       this.instagramBot.startMessageListener();
-      this.displayStatus('✅ Bot Ready');
+      console.log('✅ Bot ready\n');
       
-      this.isInitialized = true;
-      this.displaySuccessScreen();
+      this.showStatus();
       
     } catch (error) {
-      this.displayError('❌ Initialization Failed', error);
+      console.log(`❌ Failed: ${error.message}`);
       process.exit(1);
     }
   }
 
-  displayStatus(message) {
-    console.log(`\n${message}`);
-  }
-
-  displayError(message, error) {
-    console.log(`\n${message}: ${error.message}`);
-    logger.error(message, error);
-  }
-
-  displaySuccessScreen() {
-    const uptime = new Date() - this.startTime;
+  showStatus() {
+    const uptime = Date.now() - this.startTime;
     console.clear();
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║                                                              ║
-║    🚀 HYPER INSTA - READY!                                  ║
+║    🚀 HYPER INSTA - OPERATIONAL                             ║
 ║                                                              ║
 ║    ✅ Instagram: Connected                                   ║
-║    ${config.telegram.enabled ? '✅' : '❌'} Telegram: ${config.telegram.enabled ? 'Active' : 'Disabled'}                                    ║
+║    ${this.telegramBridge ? '✅' : '❌'} Telegram: ${this.telegramBridge ? 'Active' : 'Disabled'}                                    ║
 ║    ✅ Modules: ${this.moduleManager.modules.length.toString().padEnd(2)} Loaded                                    ║
 ║                                                              ║
 ║    ⚡ Startup: ${Math.round(uptime)}ms                                    ║
 ║    🕒 Started: ${this.startTime.toLocaleTimeString()}                                ║
 ║                                                              ║
-║    🎯 Listening for messages...                             ║
+║    🎯 Ready for commands...                                 ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
     `);
-    
-    logger.info('🚀 Hyper Insta is operational!');
   }
 
   async start() {
     await this.initialize();
     
     process.on('SIGINT', async () => {
-      console.log('\n\n🛑 Shutting down...');
+      console.log('\n🛑 Shutting down...');
       await this.instagramBot.disconnect();
       await this.moduleManager.unloadModules();
-      console.log('✅ Stopped gracefully');
+      console.log('✅ Stopped');
       process.exit(0);
     });
 
-    if (this.isInitialized) {
-      setInterval(() => {
-        const uptime = Math.floor((new Date() - this.startTime) / 1000);
-        const hours = Math.floor(uptime / 3600);
-        const minutes = Math.floor((uptime % 3600) / 60);
-        const seconds = uptime % 60;
-        
-        process.stdout.write(`\r⏱️  ${hours}h ${minutes}m ${seconds}s | 📊 ${this.moduleManager.modules.length} modules | 🟢 Running`);
-      }, 1000);
-    }
+    // Live status updates
+    setInterval(() => {
+      const uptime = Math.floor((Date.now() - this.startTime) / 1000);
+      const hours = Math.floor(uptime / 3600);
+      const minutes = Math.floor((uptime % 3600) / 60);
+      const seconds = uptime % 60;
+      
+      process.stdout.write(`\r⏱️  ${hours}h ${minutes}m ${seconds}s | 🔌 ${this.moduleManager.modules.length} modules | 🟢 Online`);
+    }, 1000);
   }
 }
 

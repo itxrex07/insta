@@ -3,9 +3,9 @@ export const config = {
     username: 'itxrey', // Your Instagram username
     password: 'your_instagram_password', // Your Instagram password
     sessionPath: './session/session.json',
-    messageCheckInterval: 10000, // Check for messages every 10 seconds (reduced to avoid rate limiting)
+    messageCheckInterval: 5000, // Check for messages every 5 seconds
     maxRetries: 3,
-    useMongoSession: false // Set to false to use file-based sessions
+    useMongoSession: true // Set to false to use file-based sessions
   },
   
   telegram: {

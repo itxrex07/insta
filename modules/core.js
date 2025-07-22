@@ -1,259 +1,111 @@
-import { logger, fileUtils } from '../core/utils.js';
-
+import { BaseModule } from '../core/base-module.js';
+import { logger } from '../core/utils.js';
 import { config } from '../config.js';
 import os from 'os';
-import fs from 'fs';
 
-export class CoreModule {
+export class CoreModule extends BaseModule {
   constructor(instagramBot) {
-    this.name = 'core';
+    super();
     this.instagramBot = instagramBot;
     this.startTime = new Date();
-    this.commandPrefix = '.';
-    this.commands = {
-      'ping': {
-        description: 'Check if Hyper Insta is responsive',
-        usage: '.ping',
-        handler: this.handlePing.bind(this)
-      },
-      'status': {
-        description: 'Show bot status and system information',
-        usage: '.status',
-        handler: this.handleStatus.bind(this)
-      },
-      'uptime': {
-        description: 'Show how long Hyper Insta has been running',
-        usage: '.uptime',
-        handler: this.handleUptime.bind(this)
-      },
-      'logs': {
-        description: 'Show recent bot logs',
-        usage: '.logs [count]',
-        handler: this.handleLogs.bind(this)
-      },
-      'info': {
-        description: 'Show Hyper Insta information',
-        usage: '.info',
-        handler: this.handleInfo.bind(this)
-      },
-      'restart': {
-        description: 'Restart Hyper Insta (admin only)',
-        usage: '.restart',
-        handler: this.handleRestart.bind(this),
-        adminOnly: true
-      },
-      'stats': {
-        description: 'Show Hyper Insta statistics',
-        usage: '.stats',
-        handler: this.handleStats.bind(this)
-      }
-    };
+    this.description = 'Core bot commands and system information';
     this.messageCount = 0;
     this.commandCount = 0;
     this.logBuffer = [];
-    this.maxLogBuffer = 100;
+    this.maxLogBuffer = 50;
+    
+    this.setupCommands();
+  }
+
+  setupCommands() {
+    this.registerCommand('ping', this.handlePing, 'Test bot responsiveness with actual ping', '.ping');
+    this.registerCommand('status', this.handleStatus, 'Show bot operational status', '.status');
+    this.registerCommand('server', this.handleServer, 'Show server system information', '.server');
+    this.registerCommand('logs', this.handleLogs, 'Show recent bot activity logs', '.logs [count]');
+    this.registerCommand('restart', this.handleRestart, 'Restart the bot', '.restart', true);
   }
 
   async process(message) {
-    try {
-      this.messageCount++;
-      
-      // Check if message starts with command prefix
-      if (message.text && message.text.startsWith(this.commandPrefix)) {
-        const commandText = message.text.slice(this.commandPrefix.length).trim();
-        const [commandName, ...args] = commandText.split(' ');
-        
-        if (this.commands[commandName.toLowerCase()]) {
-          this.commandCount++;
-          await this.executeCommand(commandName.toLowerCase(), args, message);
-          message.shouldForward = false; // Don't forward command messages
-        }
-      }
-
-      // Log the message to buffer
-      this.addToLogBuffer(`[${message.timestamp.toISOString()}] @${message.senderUsername}: ${message.text || '[Media]'}`);
-
-    } catch (error) {
-      logger.error('Error in Core module:', error);
-    }
-
+    this.messageCount++;
+    this.addToLogBuffer(`[${new Date().toISOString().split('T')[1].split('.')[0]}] @${message.senderUsername}: ${message.text || '[Media]'}`);
     return message;
   }
 
-  async executeCommand(commandName, args, message) {
-    try {
-      const command = this.commands[commandName];
-      
-      // Check if command requires admin privileges
-      if (command.adminOnly && !this.isAdmin(message.senderUsername)) {
-        await this.sendReply(message, '❌ This command requires admin privileges.');
-        return;
-      }
-
-      logger.info(`🎯 Executing command: ${commandName} by @${message.senderUsername}`);
-      await command.handler(args, message);
-      
-    } catch (error) {
-      logger.error(`Error executing command ${commandName}:`, error);
-      await this.sendReply(message, `❌ Error executing command: ${error.message}`);
-    }
-  }
-
   async handlePing(args, message) {
-    await this.sendReply(message, '🚀 Hyper Insta is online and ready!');
+    const start = Date.now();
+    const sent = await this.sendReply(message, '🏓 Pinging...');
+    if (sent) {
+      const ping = Date.now() - start;
+      await this.sendReply(message, `🏓 Pong! ${ping}ms`);
+    }
   }
 
   async handleStatus(args, message) {
     const uptime = this.getUptime();
-    const memoryUsage = process.memoryUsage();
-    const systemInfo = {
-      platform: os.platform(),
-      arch: os.arch(),
-      nodeVersion: process.version,
-      totalMemory: Math.round(os.totalmem() / 1024 / 1024),
-      freeMemory: Math.round(os.freemem() / 1024 / 1024),
-      cpuCount: os.cpus().length
-    };
-
-    const statusMessage = `🚀 **Hyper Insta Status**\n\n` +
+    const memUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    
+    const status = `🚀 **Hyper Insta Status**\n\n` +
       `✅ Status: Online & Active\n` +
       `⏱️ Uptime: ${uptime}\n` +
-      `📊 Messages Processed: ${this.messageCount}\n` +
-      `🎯 Commands Executed: ${this.commandCount}\n` +
-      `💾 Memory Usage: ${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB\n` +
-      `🖥️ System: ${systemInfo.platform} ${systemInfo.arch}\n` +
-      `🟢 Node.js: ${systemInfo.nodeVersion}\n` +
-      `💻 CPU Cores: ${systemInfo.cpuCount}\n` +
-      `🧠 Total RAM: ${systemInfo.totalMemory}MB\n` +
-      `🆓 Free RAM: ${systemInfo.freeMemory}MB`;
+      `📊 Messages: ${this.messageCount}\n` +
+      `🎯 Commands: ${this.commandCount}\n` +
+      `💾 Memory: ${memUsage}MB`;
 
-    await this.sendReply(message, statusMessage);
+    await this.sendReply(message, status);
   }
 
-  async handleUptime(args, message) {
-    const uptime = this.getUptime();
-    await this.sendReply(message, `⏱️ Hyper Insta uptime: ${uptime}`);
+  async handleServer(args, message) {
+    const serverInfo = `🖥️ **Server Information**\n\n` +
+      `🔧 Platform: ${os.platform()} ${os.arch()}\n` +
+      `🟢 Node.js: ${process.version}\n` +
+      `💻 CPU Cores: ${os.cpus().length}\n` +
+      `🧠 Total RAM: ${Math.round(os.totalmem() / 1024 / 1024)}MB\n` +
+      `🆓 Free RAM: ${Math.round(os.freemem() / 1024 / 1024)}MB\n` +
+      `📈 Load Avg: ${os.loadavg().map(l => l.toFixed(2)).join(', ')}`;
+
+    await this.sendReply(message, serverInfo);
   }
 
   async handleLogs(args, message) {
-    const count = parseInt(args[0]) || 10;
-    const logCount = Math.min(count, this.maxLogBuffer);
-    const recentLogs = this.logBuffer.slice(-logCount);
+    const count = Math.min(parseInt(args[0]) || 10, this.maxLogBuffer);
+    const logs = this.logBuffer.slice(-count);
     
-    if (recentLogs.length === 0) {
-      await this.sendReply(message, '📝 No recent logs available.');
+    if (logs.length === 0) {
+      await this.sendReply(message, '📝 No logs available');
       return;
     }
 
-    const logsMessage = `📝 **Recent Logs (${recentLogs.length})**\n\n` +
-      recentLogs.join('\n');
-
+    const logsMessage = `📝 **Recent Logs (${logs.length})**\n\n${logs.join('\n')}`;
     await this.sendReply(message, logsMessage);
   }
 
-  async handleInfo(args, message) {
-    const packageInfo = await this.getPackageInfo();
-    
-    const infoMessage = `🚀 **Hyper Insta Information**\n\n` +
-      `📱 Name: ${packageInfo.name || 'Hyper Insta'}\n` +
-      `🔢 Version: ${packageInfo.version || '1.0.0'}\n` +
-      `👨‍💻 Author: ${packageInfo.author || 'Hyper Team'}\n` +
-      `📄 Description: ${packageInfo.description || 'Advanced Instagram Bot with modular system'}\n` +
-      `🚀 Started: ${this.startTime.toLocaleString()}\n` +
-      `🔧 Prefix: ${this.commandPrefix}\n` +
-      `🎯 Available Commands: ${Object.keys(this.commands).length}`;
-
-    await this.sendReply(message, infoMessage);
-  }
-
   async handleRestart(args, message) {
-    await this.sendReply(message, '🔄 Restarting Hyper Insta...');
-    logger.info('🔄 Hyper Insta restart requested by admin');
-    
-    // Give time for the message to be sent
-    setTimeout(() => {
-      process.exit(0);
-    }, 2000);
-  }
-
-  async handleStats(args, message) {
-    const stats = {
-      messagesProcessed: this.messageCount,
-      commandsExecuted: this.commandCount,
-      uptime: this.getUptime(),
-      memoryUsage: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-      logBufferSize: this.logBuffer.length
-    };
-
-    const statsMessage = `📊 **Hyper Insta Statistics**\n\n` +
-      `💬 Messages Processed: ${stats.messagesProcessed}\n` +
-      `🎯 Commands Executed: ${stats.commandsExecuted}\n` +
-      `⏱️ Uptime: ${stats.uptime}\n` +
-      `💾 Memory Usage: ${stats.memoryUsage}MB\n` +
-      `📝 Log Buffer: ${stats.logBufferSize}/${this.maxLogBuffer}`;
-
-    await this.sendReply(message, statsMessage);
+    await this.sendReply(message, '🔄 Restarting...');
+    setTimeout(() => process.exit(0), 1000);
   }
 
   async sendReply(message, text) {
-    try {
-      if (this.instagramBot && this.instagramBot.sendMessage) {
-        return await this.instagramBot.sendMessage(message.threadId, text);
-      } else {
-        logger.info(`🤖 Reply to @${message.senderUsername}: ${text}`);
-        return false;
-      }
-    } catch (error) {
-      logger.error('Error sending reply:', error);
-      return false;
-    }
+    this.commandCount++;
+    return await this.instagramBot.sendMessage(message.threadId, text);
   }
 
   getUptime() {
-    const uptimeMs = Date.now() - this.startTime.getTime();
-    const days = Math.floor(uptimeMs / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((uptimeMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((uptimeMs % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((uptimeMs % (1000 * 60)) / 1000);
+    const ms = Date.now() - this.startTime.getTime();
+    const days = Math.floor(ms / 86400000);
+    const hours = Math.floor((ms % 86400000) / 3600000);
+    const minutes = Math.floor((ms % 3600000) / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
 
-    if (days > 0) {
-      return `${days}d ${hours}h ${minutes}m ${seconds}s`;
-    } else if (hours > 0) {
-      return `${hours}h ${minutes}m ${seconds}s`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${seconds}s`;
-    } else {
-      return `${seconds}s`;
-    }
+    if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
   }
 
-  async getPackageInfo() {
-    try {
-      if (await fileUtils.pathExists('./package.json')) {
-        return await fileUtils.readJson('./package.json');
-      }
-    } catch (error) {
-      logger.warn('Could not read package.json:', error.message);
-    }
-    return {};
-  }
-
-  isAdmin(username) {
-    return config.admin.users.includes(username.toLowerCase());
-  }
-
-  addToLogBuffer(logEntry) {
-    this.logBuffer.push(logEntry);
+  addToLogBuffer(entry) {
+    this.logBuffer.push(entry);
     if (this.logBuffer.length > this.maxLogBuffer) {
       this.logBuffer.shift();
     }
-  }
-
-  getCommands() {
-    return this.commands;
-  }
-
-  async cleanup() {
-    logger.info(`🧹 Core module cleaned up. Processed ${this.messageCount} messages, executed ${this.commandCount} commands`);
   }
 }
