@@ -13,30 +13,6 @@
 - **🛡️ Admin Controls** - Secure admin-only commands
 - **📊 Real-time Stats** - Live performance monitoring
 
-## 🏗️ Architecture
-
-```
-hyper-insta/
-├── core/
-│   ├── bot.js              # Main Instagram bot
-│   ├── session-manager.js  # Session & login management
-│   ├── message-handler.js  # Fast command processing
-│   ├── module-manager.js   # Module loading system
-│   ├── base-module.js      # Module base class
-│   └── utils.js           # Utilities
-├── modules/
-│   ├── core.js            # Core commands (ping, status, server, logs)
-│   └── help.js            # Dynamic help system
-├── tg-bridge/
-│   └── bridge.js          # Telegram integration
-├── db/
-│   └── index.js           # MongoDB connection
-├── session/
-│   ├── session.json       # Bot session data
-│   └── cookies.json       # Instagram cookies
-├── config.js              # Configuration
-└── index.js              # Application initializer
-```
 
 ## 🚀 Quick Start
 
