@@ -1,4 +1,4 @@
-import { logger } from './utils.js';
+import { logger } from '../utils/utils.js';
 import { config } from '../config.js';
 
 export class MessageHandler {
