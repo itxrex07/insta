@@ -67,7 +67,7 @@ export class InstagramBot {
 
       for (const thread of inbox.slice(0, 2)) {
         await this.checkThreadMessages(thread);
-        await this.delay(100); // Reduced delay
+        await this.delay(10); // Reduced delay
       }
 
     } catch (error) {
