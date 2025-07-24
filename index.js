@@ -29,9 +29,7 @@ class HyperInsta {
       console.log('🔌 Loading modules...');
   
       console.log('✅ Modules loadedy');
-      
-      console.log('⚡ Starting message listener...');
-      this.instagramBot.startMessageListener();
+  
       console.log('✅ Bot is now LIVE and ready!');
       
       this.showLiveStatus();
