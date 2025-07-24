@@ -1,150 +1,285 @@
 import { IgApiClient } from 'instagram-private-api';
-import { logger } from '../utils/utils.js';
-import { config } from '../config.js';
-import { SessionManager } from './session-manager.js';
-import { MessageHandler } from './message-handler.js';
+import { withRealtime } from 'instagram_mqtt';
+import fs from 'fs';
+import tough from 'tough-cookie';
 import { ModuleManager } from './module-manager.js';
+import { MessageHandler } from './message-handler.js';
+import config from './config.js';
 
-export class InstagramBot {
+
+class InstagramBot {
   constructor() {
-    this.ig = new IgApiClient();
-    this.sessionManager = new SessionManager(this.ig);
-    this.moduleManager = new ModuleManager(this);
-    this.messageHandler = new MessageHandler(this, this.moduleManager, null);
+    this.ig = withRealtime(new IgApiClient());
+    this.messageHandlers = [];
     this.isRunning = false;
-    this.lastMessageCheck = new Date();
+    this.lastMessageCheck = new Date(Date.now() - 60000); // Start 1 minute ago
+  }
+
+  log(level, message, ...args) {
+    const timestamp = new Date().toISOString();
+    console.log(`[${level}] ${message}`, ...args);
   }
 
   async login() {
-    return await this.sessionManager.login();
-  }
-
-  async setupMessageHandlers(telegramBridge) {
-    // Load modules first
-    await this.moduleManager.loadModules();
-    
-    // Update message handler with telegram bridge
-    this.messageHandler = new MessageHandler(this, this.moduleManager, telegramBridge);
-    
-    // Setup Telegram reply handler
-    if (telegramBridge?.enabled) {
-      telegramBridge.onMessage(async (reply) => {
-        if (reply.type === 'telegram_reply') {
-          await this.sendMessage(reply.threadId, reply.text);
-        }
-      });
-    }
-  }
-
-  startMessageListener() {
-    if (this.isRunning) return;
-    
-    this.isRunning = true;
-    
-    setInterval(async () => {
-      if (this.isRunning) {
-        try {
-          await this.checkForNewMessages();
-        } catch (error) {
-          if (error.message.includes('login_required')) {
-            try {
-              await this.login();
-            } catch (loginError) {
-              logger.error('Re-login failed:', loginError.message);
-            }
-          }
-        }
-      }
-    }, 1000); // Super fast 3 second intervals
-  }
-
-  async checkForNewMessages() {
     try {
-      const inboxFeed = this.ig.feed.directInbox();
-      const inbox = await inboxFeed.items();
-      
-      if (!inbox?.length) return;
+      const username = config.instagram?.username;
+      const password = config.instagram?.password;
 
-      for (const thread of inbox.slice(0, 10)) {
-        await this.checkThreadMessages(thread);
-        await this.delay(100); // Reduced delay
+
+
+      if (!username) {
+        throw new Error('❌ INSTAGRAM_USERNAME is missing');
       }
+
+      this.ig.state.generateDevice(username);
+
+      // Try to load cookies first
+      try {
+        await this.loadCookiesFromJson('.session/cookies.json');
+        await this.ig.account.currentUser();
+        this.log('INFO', '✅ Logged in using saved cookies');
+      } catch (error) {
+        if (!password) {
+          throw new Error('❌ INSTAGRAM_PASSWORD is required for fresh login');
+        }
+        this.log('INFO', '🔑 Attempting fresh login...');
+        await this.ig.account.login(username, password);
+        this.log('INFO', '✅ Fresh login successful');
+      }
+
+      // Register handlers BEFORE connecting
+      this.registerRealtimeHandlers();
+
+      // Connect to realtime
+      await this.ig.realtime.connect({
+        irisData: await this.ig.feed.directInbox().request(),
+      });
+
+      const user = await this.ig.account.currentUser();
+      this.log('INFO', `✅ Connected as @${user.username} (ID: ${user.pk})`);
+
+      this.isRunning = true;
+      this.log('INFO', '🚀 Instagram bot is now running and listening for messages');
 
     } catch (error) {
+      this.log('ERROR', '❌ Failed to initialize bot:', error.message);
       throw error;
     }
   }
 
-  async checkThreadMessages(thread) {
-    try {
-      const threadFeed = this.ig.feed.directThread({ thread_id: thread.thread_id });
-      const messages = await threadFeed.items();
-      
-      if (!messages?.length) return;
+  async loadCookiesFromJson(path = './cookies.json') {
+    const raw = fs.readFileSync(path, 'utf-8');
+    const cookies = JSON.parse(raw);
 
-      const latestMessage = messages[0];
-      
-      if (this.isNewMessage(latestMessage)) {
-        await this.handleMessage(latestMessage, thread);
-      }
+    for (const cookie of cookies) {
+      const toughCookie = new tough.Cookie({
+        key: cookie.name,
+        value: cookie.value,
+        domain: cookie.domain.replace(/^\./, ''),
+        path: cookie.path || '/',
+        secure: cookie.secure !== false,
+        httpOnly: cookie.httpOnly !== false,
+      });
 
-    } catch (error) {
-      // Silent fail for thread errors
+      await this.ig.state.cookieJar.setCookie(
+        toughCookie.toString(),
+        `https://${toughCookie.domain}${toughCookie.path}`
+      );
     }
+
+    this.log('INFO', `🍪 Loaded ${cookies.length} cookies from file`);
+  }
+
+  registerRealtimeHandlers() {
+    this.log('INFO', '📡 Registering real-time event handlers...');
+
+    // Main message handler - this is the key one for direct messages
+    this.ig.realtime.on('message', async (data) => {
+      try {
+        this.log('INFO', '📨 [Realtime] Message event received');
+        
+        if (!data.message) {
+          this.log('WARN', '⚠️ No message in event data');
+          return;
+        }
+
+        if (!this.isNewMessage(data.message)) {
+          this.log('WARN', '⚠️ Message filtered as old');
+          return;
+        }
+
+        this.log('INFO', '✅ Processing new message...');
+        await this.handleMessage(data.message, data);
+
+      } catch (err) {
+        this.log('ERROR', '❌ Error in message handler:', err.message);
+      }
+    });
+
+    // Direct events handler
+    this.ig.realtime.on('direct', async (data) => {
+      try {
+        this.log('INFO', '📨 [Realtime] Direct event received');
+        
+        if (data.message) {
+          if (!this.isNewMessage(data.message)) {
+            this.log('WARN', '⚠️ Direct message filtered as old');
+            return;
+          }
+
+          this.log('INFO', '✅ Processing new direct message...');
+          await this.handleMessage(data.message, data);
+        }
+
+      } catch (err) {
+        this.log('ERROR', '❌ Error in direct handler:', err.message);
+      }
+    });
+
+    // Debug all received events
+    this.ig.realtime.on('receive', (topic, messages) => {
+      // Safely convert topic to string for checking
+      const topicStr = String(topic || '');
+      if (topicStr.includes('direct') || topicStr.includes('message')) {
+        this.log('INFO', `📥 [Realtime] Received: ${topicStr}`);
+      }
+    });
+
+    // Error handling
+    this.ig.realtime.on('error', (err) => {
+      this.log('ERROR', '🚨 Realtime error:', err.message || err);
+    });
+
+    this.ig.realtime.on('close', () => {
+      this.log('WARN', '🔌 Realtime connection closed');
+    });
   }
 
   isNewMessage(message) {
-    const messageTime = new Date(message.timestamp / 1000);
-    const isNew = messageTime > this.lastMessageCheck;
-    
-    if (isNew) {
-      this.lastMessageCheck = messageTime;
+    try {
+      // Instagram timestamps are in microseconds
+      const messageTime = new Date(parseInt(message.timestamp) / 1000);
+      
+      this.log('INFO', `⏰ Message time: ${messageTime.toISOString()}, Last check: ${this.lastMessageCheck.toISOString()}`);
+
+      const isNew = messageTime > this.lastMessageCheck;
+      
+      if (isNew) {
+        this.lastMessageCheck = messageTime;
+        this.log('INFO', '✅ Message is new');
+      } else {
+        this.log('WARN', '❌ Message is old');
+      }
+
+      return isNew;
+    } catch (error) {
+      this.log('ERROR', '❌ Error checking message timestamp:', error.message);
+      return true; // Default to processing
     }
-    
-    return isNew;
   }
 
-  async handleMessage(message, thread) {
+  async handleMessage(message, eventData) {
     try {
-      const sender = thread.users.find(u => u.pk.toString() === message.user_id.toString());
+      // Try to find sender info from different possible locations
+      let sender = null;
+      if (eventData.thread && eventData.thread.users) {
+        sender = eventData.thread.users.find(u => u.pk?.toString() === message.user_id?.toString());
+      }
       
       const processedMessage = {
         id: message.item_id,
         text: message.text || '',
         sender: message.user_id,
-        senderUsername: sender?.username || 'Unknown',
-        senderDisplayName: sender?.full_name || sender?.username || 'Unknown',
-        timestamp: new Date(message.timestamp / 1000),
-        threadId: thread.thread_id,
-        threadTitle: thread.thread_title || 'Direct Message',
-        type: message.item_type,
-        shouldForward: true
+        senderUsername: sender?.username || `user_${message.user_id}`,
+        timestamp: new Date(parseInt(message.timestamp) / 1000),
+        threadId: eventData.thread?.thread_id || message.thread_id || 'unknown',
+        threadTitle: eventData.thread?.thread_title || 'Direct Message',
+        type: message.item_type
       };
 
-      await this.messageHandler.handleMessage(processedMessage);
+      this.log('INFO', `💬 New message from @${processedMessage.senderUsername}: ${processedMessage.text}`);
+
+      // Execute message handlers
+      for (const handler of this.messageHandlers) {
+        try {
+          await handler(processedMessage);
+        } catch (handlerError) {
+          this.log('ERROR', '❌ Message handler error:', handlerError.message);
+        }
+      }
 
     } catch (error) {
-      logger.error('Handle message error:', error.message);
+      this.log('ERROR', '❌ Error handling message:', error.message);
     }
+  }
+
+  onMessage(handler) {
+    this.messageHandlers.push(handler);
+    this.log('INFO', `📝 Added message handler (total: ${this.messageHandlers.length})`);
   }
 
   async sendMessage(threadId, text) {
     try {
       await this.ig.entity.directThread(threadId).broadcastText(text);
+      this.log('INFO', `📤 Sent message to thread ${threadId}: ${text}`);
       return true;
     } catch (error) {
-      return false;
+      this.log('ERROR', '❌ Error sending message:', error.message);
+      throw error;
     }
   }
 
-  async delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  async disconnect() {
+    this.log('INFO', '🔌 Disconnecting from Instagram...');
+    this.isRunning = false;
+    
+    try {
+      if (this.ig.realtime) {
+        await this.ig.realtime.disconnect();
+      }
+      this.log('INFO', '✅ Disconnected successfully');
+    } catch (error) {
+      this.log('WARN', '⚠️ Error during disconnect:', error.message);
+    }
   }
+}
 
-async disconnect() {
-  this.isRunning = false;
-  // This will ensure cookies from the file are saved to the DB on disconnect.
-  await this.sessionManager.saveCookiesToDb();
-  await this.moduleManager.cleanup();
+
+// Main execution
+async function main() {
+  const bot = new InstagramBot();
+  await bot.login(); // ✅ Login with cookies or credentials
+
+  // ✅ Load all modules
+  const moduleManager = new ModuleManager(bot);
+  await moduleManager.loadModules();
+
+  // ✅ Setup message handler
+  const messageHandler = new MessageHandler(bot, moduleManager, null);
+
+  // ✅ Route incoming messages to the handler
+  bot.onMessage((message) => messageHandler.handleMessage(message));
+
+  console.log('🚀 Bot is running with full module support. Type .help or use your commands.');
+
+  // ✅ Heartbeat every 30 seconds
+  setInterval(() => {
+    console.log(`💓 Bot heartbeat - Running: ${bot.isRunning}, Last check: ${bot.lastMessageCheck.toISOString()}`);
+  }, 300000);
+
+  // ✅ Graceful shutdown
+  process.on('SIGINT', async () => {
+    console.log('\n👋 Shutting down...');
+    await bot.disconnect();
+    process.exit(0);
+  });
 }
-}
+
+main().catch((error) => {
+  console.error('❌ Bot failed to start:', error.message);
+  process.exit(1);
+});
+
+// Export for external usage
+export { InstagramBot };
+
