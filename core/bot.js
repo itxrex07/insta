@@ -4,8 +4,7 @@ import fs from 'fs';
 import tough from 'tough-cookie';
 import { ModuleManager } from './module-manager.js';
 import { MessageHandler } from './message-handler.js';
-import config from './config.js';
-
+import { config } from './config.js';
 
 class InstagramBot {
   constructor() {
