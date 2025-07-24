@@ -7,7 +7,7 @@ import { connectDb } from '../utils/db.js';
 export class SessionManager {
   constructor(ig) {
     this.ig = ig;
-    this.cookiesPath = './session/cookies.json';
+    this.cookiesPath = './cookies.json';
     this.db = null;
   }
 
