@@ -26,9 +26,9 @@ class HyperInsta {
         console.log('✅ Telegram connected');
       }
       
-      console.log('🔌 Loading modules & setting up handlers...');
-      await this.instagramBot.setupMessageHandlers(this.telegramBridge);
-      console.log('✅ Modules loaded & handlers ready');
+      console.log('🔌 Loading modules...');
+  
+      console.log('✅ Modules loadedy');
       
       console.log('⚡ Starting message listener...');
       this.instagramBot.startMessageListener();
