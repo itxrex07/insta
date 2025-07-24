@@ -19,52 +19,54 @@ class InstagramBot {
     console.log(`[${level}] ${message}`, ...args);
   }
 
-  async login() {
-    try {
-      const username = config.instagram?.username;
-      const password = config.instagram?.password;
+ async login() {
+  try {
+    const username = config.instagram?.username;
+    const password = config.instagram?.password;
+    const allowFreshLogin = config.instagram?.allowFreshLogin !== false; // default: true
 
-
-
-      if (!username) {
-        throw new Error('❌ INSTAGRAM_USERNAME is missing');
-      }
-
-      this.ig.state.generateDevice(username);
-
-      // Try to load cookies first
-      try {
-        await this.loadCookiesFromJson('.session/cookies.json');
-        await this.ig.account.currentUser();
-        this.log('INFO', '✅ Logged in using saved cookies');
-      } catch (error) {
-        if (!password) {
-          throw new Error('❌ INSTAGRAM_PASSWORD is required for fresh login');
-        }
-        this.log('INFO', '🔑 Attempting fresh login...');
-        await this.ig.account.login(username, password);
-        this.log('INFO', '✅ Fresh login successful');
-      }
-
-      // Register handlers BEFORE connecting
-      this.registerRealtimeHandlers();
-
-      // Connect to realtime
-      await this.ig.realtime.connect({
-        irisData: await this.ig.feed.directInbox().request(),
-      });
-
-      const user = await this.ig.account.currentUser();
-      this.log('INFO', `✅ Connected as @${user.username} (ID: ${user.pk})`);
-
-      this.isRunning = true;
-      this.log('INFO', '🚀 Instagram bot is now running and listening for messages');
-
-    } catch (error) {
-      this.log('ERROR', '❌ Failed to initialize bot:', error.message);
-      throw error;
+    if (!username) {
+      throw new Error('❌ INSTAGRAM_USERNAME is missing');
     }
+
+    this.ig.state.generateDevice(username);
+
+    try {
+      await this.loadCookiesFromJson('.session/cookies.json');
+      await this.ig.account.currentUser();
+      this.log('INFO', '✅ Logged in using saved cookies');
+    } catch (error) {
+      if (!allowFreshLogin) {
+        throw new Error('❌ Fresh login is disabled and cookie login failed.');
+      }
+
+      if (!password) {
+        throw new Error('❌ INSTAGRAM_PASSWORD is required for fresh login');
+      }
+
+      this.log('INFO', '🔑 Attempting fresh login...');
+      await this.ig.account.login(username, password);
+      this.log('INFO', '✅ Fresh login successful');
+    }
+
+    this.registerRealtimeHandlers();
+
+    await this.ig.realtime.connect({
+      irisData: await this.ig.feed.directInbox().request(),
+    });
+
+    const user = await this.ig.account.currentUser();
+    this.log('INFO', `✅ Connected as @${user.username} (ID: ${user.pk})`);
+
+    this.isRunning = true;
+    this.log('INFO', '🚀 Instagram bot is now running and listening for messages');
+
+  } catch (error) {
+    this.log('ERROR', '❌ Failed to initialize bot:', error.message);
+    throw error;
   }
+}
+
 
   async loadCookiesFromJson(path = './cookies.json') {
     const raw = fs.readFileSync(path, 'utf-8');
