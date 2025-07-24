@@ -2,7 +2,7 @@ export const config = {
   instagram: {
     username: 'itxrey', // Your Instagram username
     password: 'your_instagram_password', // Your Instagram password
-    useMongoSession: true // Set to false to use file-based sessions
+    allowFreshLogin: false
   },
   
   telegram: {
