@@ -19,7 +19,7 @@ class InstagramBot {
     console.log(`[${level}] ${message}`, ...args);
   }
 
- async login() {
+async login() {
   try {
     const username = config.instagram?.username;
     const password = config.instagram?.password;
@@ -31,26 +31,32 @@ class InstagramBot {
 
     this.ig.state.generateDevice(username);
 
+    // Step 1: Try session.json first
     try {
-      await this.loadCookiesFromJson('.session/cookies.json');
-      await this.ig.account.currentUser();
-      this.log('INFO', '✅ Logged in using saved cookies');
-    } catch (error) {
-      if (!allowFreshLogin) {
-        throw new Error('❌ Fresh login is disabled and cookie login failed.');
-      }
+      await fs.access('./session.json');
+      this.log('INFO', '📂 Found session.json, trying to login from session...');
+      const sessionData = JSON.parse(await fs.readFile('./session.json', 'utf-8'));
+      await this.ig.state.deserialize(sessionData);
+      await this.ig.account.currentUser(); // Validate session
+      this.log('INFO', '✅ Logged in from session.json');
+    } catch {
+      // Step 2: Fallback to cookies.json
+      this.log('INFO', '📂 session.json not found or invalid, trying cookies.json...');
+      await this.loadCookiesFromJson('./cookies.json');
+      await this.ig.account.currentUser(); // Validate cookies
+      this.log('INFO', '✅ Logged in using cookies.json');
 
-      if (!password) {
-        throw new Error('❌ INSTAGRAM_PASSWORD is required for fresh login');
-      }
-
-      this.log('INFO', '🔑 Attempting fresh login...');
-      await this.ig.account.login(username, password);
-      this.log('INFO', '✅ Fresh login successful');
+      // Step 3: Save session after cookie login
+      const session = await this.ig.state.serialize();
+      delete session.constants;
+      await fs.writeFile('./session.json', JSON.stringify(session, null, 2));
+      this.log('INFO', '💾 session.json saved from cookie-based login');
     }
 
+    // Handlers
     this.registerRealtimeHandlers();
 
+    // Connect to realtime
     await this.ig.realtime.connect({
       irisData: await this.ig.feed.directInbox().request(),
     });
@@ -63,10 +69,9 @@ class InstagramBot {
 
   } catch (error) {
     this.log('ERROR', '❌ Failed to initialize bot:', error.message);
-    throw error;
+    throw new Error('🚫 Could not login via session or cookies');
   }
 }
-
 
   async loadCookiesFromJson(path = './cookies.json') {
     const raw = fs.readFileSync(path, 'utf-8');
