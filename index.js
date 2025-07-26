@@ -1,22 +1,26 @@
 import { InstagramBot } from './core/bot.js';
 import { TelegramBridge } from './telegram/bridge.js';
-import { logger } from './utils/utils.js';
+import { ModuleManager } from './core/module-manager.js';
+import { MessageHandler } from './core/message-handler.js';
+import { logger } from './utils/utils.js'; 
 import { config } from './config.js';
-import { ModuleManager } from './core/module-manager.js'; 
-import { MessageHandler } from './core/message-handler.js'; 
-console.clear();
+import { connectDb } from './utils/db.js';
 
 class HyperInsta {
   constructor() {
     this.startTime = new Date();
     this.instagramBot = new InstagramBot();
-    this.telegramBridge = config.telegram.enabled ? new TelegramBridge() : null;
+    this.telegramBridge = config.telegram?.enabled ? new TelegramBridge() : null;
   }
-
 
   async initialize() {
     try {
       this.showStartupBanner();
+
+
+      console.log('🗄️ Connecting to MongoDB...');
+      await connectDb();
+      console.log('✅ MongoDB connected');
 
       console.log('📱 Connecting to Instagram...');
       await this.instagramBot.login();
@@ -29,26 +33,32 @@ class HyperInsta {
       }
 
       console.log('🔌 Loading modules...');
-      const moduleManager = new ModuleManager(this.instagramBot); // Pass the bot instance
+      const moduleManager = new ModuleManager(this.instagramBot);
       await moduleManager.loadModules();
       console.log('✅ Modules loaded');
 
-      // 2. Initialize Message Handler (like in bot.js main)
-      // Pass the bot instance, the moduleManager instance, and the telegramBridge (or null)
+      console.log('📨 Initializing message handler...');
       const messageHandler = new MessageHandler(this.instagramBot, moduleManager, this.telegramBridge);
-
-      // 3. Connect the Bot's message events to the Message Handler (CRUCIAL PART)
-      // This links the bot's internal message processing to your modular system
       this.instagramBot.onMessage((message) => messageHandler.handleMessage(message));
-      console.log('📨 Message handler connected');
+      console.log('✅ Message handler connected');
+
+      await this.instagramBot.startMessageRequestsMonitor(config.messageRequestInterval || 300000);
+      console.log('🕒 Message request monitor started');
 
       console.log('✅ Bot is now LIVE and ready!');
-
       this.showLiveStatus();
 
     } catch (error) {
-      console.error(`❌ Startup failed: ${error.message}`); // Use console.error for errors
-      console.debug(error.stack); // Log stack trace for debugging
+      console.error(`❌ Startup failed: ${error.message}`);
+      console.debug(error.stack);
+      // Attempt cleanup
+      if (this.instagramBot) {
+        try {
+          await this.instagramBot.disconnect();
+        } catch (disconnectError) {
+          console.error('❌ Error during cleanup disconnect:', disconnectError.message);
+        }
+      }
       process.exit(1);
     }
   }
