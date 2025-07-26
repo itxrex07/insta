@@ -9,7 +9,7 @@ export const config = {
     token: '7580382614:AAH30PW6TFmgRzbC7HUXIHQ35GpndbJOIEI',
     bridgeGroupId: '-1002287300661',
     adminUserId: '7405203657',
-    enabled: false,
+    enabled: true,
   },
   
   mongo: {
