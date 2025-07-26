@@ -21,7 +21,7 @@ export class MessageHandler {
 
       // Forward to Telegram if enabled
       if (this.telegramBridge?.enabled && config.telegram.enabled) {
-        await this.telegramBridge.forwardMessage(message);
+        await this.telegramBridge.sendToTelegram(message);
       }
 
     } catch (error) {
