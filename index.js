@@ -1,8 +1,9 @@
+// index.js
 import { InstagramBot } from './core/bot.js'; // Ensure path is correct
 // import { logger } from './utils/utils.js'; // Uncomment if logger exists and works
 import { config } from './config.js'; // Ensure path is correct
 import { connectDb } from './telegram/db.js'; // Adjust path
-import TelegramBridge from './telegram/bridge.js'; // Adjust path
+import { TelegramBridge } from './telegram/bridge.js'; // Change this line
 
 // Fallback logger if utils logger isn't working as expected for debugging
 const logger = {
