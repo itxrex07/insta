@@ -1,192 +1,106 @@
-// index.js
-import { InstagramBot } from './core/bot.js'; // Ensure path is correct
-// import { logger } from './utils/utils.js'; // Uncomment if logger exists and works
-import { config } from './config.js'; // Ensure path is correct
-import { connectDb } from './telegram/db.js'; // Adjust path
-import { TelegramBridge } from './telegram/bridge.js'; // Change this line
+// Import necessary modules
+import { InstagramBot } from './core/bot.js'; // Adjust path if needed
+import { ModuleManager } from './core/module-manager.js'; // Adjust path if needed
+import { MessageHandler } from './core/message-handler.js'; // Adjust path if needed
+import { config } from './config.js'; // Assuming config.js is in the project root
+import { logger } from './utils/utils.js'; // Assuming you have a logger utility
 
-// Fallback logger if utils logger isn't working as expected for debugging
-const logger = {
-  info: (...args) => console.log('[INFO] [Index]', ...args),
-  error: (...args) => console.error('[ERROR] [Index]', ...args),
-  debug: (...args) => console.log('[DEBUG] [Index]', ...args),
+// Graceful Shutdown Handler
+const shutdownHandler = async (botInstance) => {
+  logger.info('👋 [SIGINT/SIGTERM] Shutting down gracefully...');
+  if (botInstance) {
+    try {
+      await botInstance.disconnect();
+      logger.info('🛑 Bot disconnected.');
+    } catch (disconnectError) {
+      logger.error('❌ Error during bot disconnect:', disconnectError.message);
+    }
+  }
+  logger.info('🛑 Shutdown complete.');
+  process.exit(0);
 };
 
-console.clear();
+// Main Execution Function
+async function run() {
+  let bot = null;
 
+  try {
+    logger.info('🚀 Starting Instagram Bot...');
 
-class HyperInsta {
-  constructor() {
-    this.startTime = new Date();
-    this.instagramBot = null;
-    this.moduleManager = null;
-    this.messageHandler = null;
-    this.telegramBridge = null; // Add this
-  }
+    // 1. Instantiate the core bot
+    bot = new InstagramBot();
 
-  async initialize() {
-    try {
-      this.showStartupBanner();
+    // 2. Login to Instagram
+    await bot.login();
+    logger.info('🔓 Successfully logged into Instagram.');
 
-      // --- Initialize Database ---
-      logger.info('🗄️ Initializing MongoDB...');
-      await connectDb(); // This will connect and log
-      logger.info('✅ MongoDB initialized.');
+    // 3. Initialize the Module Manager
+    // Pass the bot instance so modules can interact with it
+    const moduleManager = new ModuleManager(bot);
+    await moduleManager.init(); // Use init which calls loadModules and sets up commandRegistry
+    logger.info('🔌 Module Manager initialized.');
 
-      // --- Initialize Instagram Bot ---
-      logger.info('📱 Initializing Instagram Bot...');
-      this.instagramBot = new InstagramBot();
-      await this.instagramBot.login();
-      logger.info('✅ Instagram Bot initialized.');
+    // 4. Initialize the Message Handler
+    // Pass the bot, moduleManager, and potentially a telegramBridge if you have one
+    const telegramBridge = null; // Replace with actual bridge instance if needed
+    const messageHandler = new MessageHandler(bot, moduleManager, telegramBridge);
+    logger.info('📨 Message Handler initialized.');
 
-      // --- Initialize Telegram Bridge ---
-      logger.info('🌉 Initializing Telegram Bridge...');
-      this.telegramBridge = new TelegramBridge(this.instagramBot); // Pass IG bot instance
-      // Optionally wait a moment or check this.telegramBridge.enabled
-      logger.info('✅ Telegram Bridge initialized.');
+    // 5. Connect the Bot's message event to the Message Handler
+    // This links the bot's internal message processing to your modular system
+    bot.onMessage((message) => messageHandler.handleMessage(message));
+    logger.info('🔗 Connected Bot message events to Message Handler.');
 
-    // --- Setup Module manager ---
-      logger.info('📦 Initializing Module Manager...');
-      // Import ModuleManager dynamically or ensure path is correct
-      const { ModuleManager } = await import('./core/module-manager.js'); 
-      this.moduleManager = new ModuleManager(this.instagramBot); // Pass bot instance if needed by modules
-      await this.moduleManager.loadModules();
-      logger.info('✅ Module Manager initialized and modules loaded.');
-
-      // --- Setup Message Handler ---
-      const { MessageHandler } = await import('./core/message-handler.js');
-      // Pass the TelegramBridge instance to the MessageHandler
-      this.messageHandler = new MessageHandler(this.instagramBot, this.moduleManager, this.telegramBridge);
-
-      // Register the main Instagram message handler callback
-      this.instagramBot.onMessage(async (instagramMessage) => {
-        logger.debug('📩 Message received by index, forwarding to MessageHandler...');
-        try {
-          await this.messageHandler.handleMessage(instagramMessage);
-          // --- Forward to Telegram Bridge ---
-          // After modules handle it, forward it via the bridge
-          if (this.telegramBridge?.enabled) {
-             await this.telegramBridge.forwardInstagramMessage(instagramMessage);
-          } else if (config.telegram?.token) { // Configured but failed init
-              logger.warn('⚠️ Telegram is configured but bridge is not enabled. Message not forwarded.');
-          }
-        } catch (handlerError) {
-          logger.error('❌ Error in main message handling chain:', handlerError.message);
-        }
-      });
-
-      logger.info('🕒 Starting Message Requests Monitor...');
-      await this.instagramBot.startMessageRequestsMonitor(); // Start periodic checks
-      logger.info('✅ Message Requests Monitor started.');
-
-      this.showLiveStatus();
-
-      logger.info('🚀 HyperInsta initialization complete.');
-    } catch (error) {
-      logger.error(`❌ Startup failed: ${error.message}`);
-      logger.debug('Startup error stack:', error.stack); // More detail for debugging
-      // Attempt graceful shutdown if bot was partially initialized
-      if (this.instagramBot) {
-        try {
-          await this.instagramBot.disconnect();
-          logger.info('🧹 Partially initialized bot disconnected.');
-        } catch (disconnectError) {
-          logger.error('❌ Error during cleanup disconnect:', disconnectError.message);
-        }
-      }
-      process.exit(1);
+    // 6. Start auxiliary features (like message request monitoring)
+    if (config.monitorMessageRequests !== false) { // Optional config flag
+        await bot.startMessageRequestsMonitor(config.messageRequestInterval || 300000);
     }
-  }
 
-  showStartupBanner() {
-    console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║    🚀 HYPER INSTA - INITIALIZING                           ║
-║                                                              ║
-║    ⚡ Ultra Fast • 🔌 Modular • 🛡️ Robust                  ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
-    `);
-  }
+    // 7. Log that the bot is fully operational
+    logger.info(`🚀 Instagram bot (@${bot.ig.state.cookieUsername}) is now running and listening for messages!`);
+    // You could print available commands or other startup info here
+    // const allCommands = moduleManager.getAllCommands();
+    // logger.info(`Available commands: ${Array.from(allCommands.keys()).join(', ')}`);
 
-  showLiveStatus() {
-    const uptimeMs = Date.now() - this.startTime.getTime();
-    console.clear();
-    console.log(`
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║    🚀 HYPER INSTA - LIVE & OPERATIONAL                     ║
-║                                                              ║
-║    ✅ Instagram: Connected & Active                         ║
-║    ❌ Telegram: Disabled                                     ║
-║    ⚡ Startup Time: ${Math.round(uptimeMs)}ms                                ║
-║    🕒 Started: ${this.startTime.toLocaleTimeString()}                              ║
-║                                                              ║
-║    🎯 Ready for INSTANT commands...                        ║
-║                                                              ║
-╚══════════════════════════════════════════════════════════════╝
+    // 8. Setup Heartbeat (Optional, copied logic from bot.js main)
+    const heartbeatInterval = setInterval(() => {
+      logger.info(`💓 Bot heartbeat - Running: ${bot.isRunning}`);
+    }, config.heartbeatInterval || 300000); // Default every 5 minutes
 
-🔥 Bot is running at MAXIMUM PERFORMANCE!
-💡 Type .help in Instagram to see all commands
-    `);
-  }
+    // 9. Attach Graceful Shutdown Listeners
+    process.on('SIGINT', () => shutdownHandler(bot));
+    process.on('SIGTERM', () => shutdownHandler(bot));
 
-  async shutdown() {
-    logger.info('🛑 Initiating graceful shutdown...');
-    try {
-      if (this.instagramBot && this.instagramBot.isRunning) {
-        await this.instagramBot.disconnect();
-        logger.info('✅ Instagram Bot disconnected.');
+    // 10. Keep the process alive (the realtime connection does this)
+    // The bot's realtime connection keeps the event loop active.
+    // If needed for other async operations, you might use a long-running loop or wait on a promise.
+
+  } catch (error) {
+    logger.error('❌ Fatal error during bot startup or execution:', error.message);
+    logger.debug(error.stack); // Log stack trace in debug mode
+
+    // Attempt cleanup if bot was partially initialized
+    if (bot) {
+      try {
+        await bot.disconnect();
+        logger.info('🧹 Cleanup disconnect attempted after error.');
+      } catch (disconnectError) {
+        logger.error('❌ Error during cleanup disconnect:', disconnectError.message);
       }
-    } catch (error) {
-      logger.error('❌ Error during bot disconnect:', error.message);
     }
-    logger.info('✅ Hyper Insta stopped.');
-  }
 
-  async start() {
-    await this.initialize();
-
-    // Handle shutdown signals
-    const shutdownSignals = ['SIGINT', 'SIGTERM'];
-    shutdownSignals.forEach(signal => {
-      process.on(signal, async () => {
-        logger.info(`\n🛑 Received ${signal}, shutting down gracefully...`);
-        await this.shutdown();
-        process.exit(0);
-      });
-    });
-
-    // Handle unhandled promise rejections (robustness)
-    process.on('unhandledRejection', (reason, promise) => {
-      logger.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason.message || reason);
-      // Application specific logging, throwing an error, or other logic here
-    });
-
-    // Handle uncaught exceptions (robustness)
-    process.on('uncaughtException', (err) => {
-      logger.error('💥 Uncaught Exception:', err.message);
-      logger.debug('Uncaught Exception Stack:', err.stack);
-      // Close resources gracefully then exit
-      this.shutdown().finally(() => {
-        process.exit(1); // Exit with error code
-      });
-    });
+    process.exit(1); // Exit with error code
   }
 }
 
-// Ensure the script runs only when executed directly
+// Run the bot only if this file is executed directly (not imported)
 if (import.meta.url === `file://${process.argv[1]}`) {
-    const app = new HyperInsta();
-    app.start().catch((error) => {
-        console.error('❌ Fatal error in main application loop:', error.message);
-        console.error('Stack:', error.stack);
-        process.exit(1);
-    });
-} else {
-    console.log('[Index] Script imported as module, not executing main().');
+  run().catch((error) => {
+    logger.error('❌ Unhandled error in main execution flow:', error.message);
+    logger.debug(error.stack);
+    process.exit(1);
+  });
 }
 
-// Export for potential external usage (though less common for main index)
-// export { HyperInsta };
+// Export run function for potential programmatic usage
+export { run };
