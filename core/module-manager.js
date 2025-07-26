@@ -1,58 +1,37 @@
 import { logger } from '../utils/utils.js';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-// For ES modules, we need to handle __dirname
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 export class ModuleManager {
   constructor(instagramBot = null) {
     this.modules = [];
-    this.commandRegistry = new Map();
+    this.commandRegistry = null; // will be initialized in init()
     this.instagramBot = instagramBot;
-    this.modulesPath = path.join(__dirname, '..', 'modules'); // Better path resolution
+    this.modulesPath = './modules';
   }
-
   async loadModules() {
     try {
-      logger.info('📂 Looking for modules in:', this.modulesPath);
-      
-      if (!fs.existsSync(this.modulesPath)) {
-        logger.warn('📁 Modules directory not found');
-        return;
-      }
-
       const moduleFiles = fs.readdirSync(this.modulesPath)
-        .filter(file => file.endsWith('.js') && file !== 'index.js')
+        .filter(file => file.endsWith('.js'))
         .sort();
-
-      logger.info('📄 Found module files:', moduleFiles);
 
       for (const file of moduleFiles) {
         await this.loadModule(file);
       }
 
       this.buildCommandRegistry();
-      logger.info(`🔌 Loaded ${this.modules.length} modules with ${this.commandRegistry.size} commands`);
+      logger.info(`🔌 Loaded ${this.modules.length} modules`);
 
     } catch (error) {
-      logger.error('❌ Module loading error:', {
-        error: error.message,
-        stack: error.stack
-      });
+      logger.error('Module loading error:', error.stack || error.message);
+
     }
   }
 
   async loadModule(filename) {
     try {
       const modulePath = path.join(this.modulesPath, filename);
-      logger.info(`📥 Loading module: ${filename} from ${modulePath}`);
-      
-      // Clear module cache for hot reloading (optional)
-      const moduleUrl = `file://${modulePath}?update=${Date.now()}`;
-      const moduleImport = await import(moduleUrl);
+      const moduleImport = await import(`../${modulePath}`);
       const ModuleClass = Object.values(moduleImport)[0];
       
       if (!ModuleClass || typeof ModuleClass !== 'function') {
@@ -62,26 +41,19 @@ export class ModuleManager {
       let moduleInstance;
       const moduleName = ModuleClass.name;
 
-      logger.info(`🔧 Creating module instance: ${moduleName}`);
-
-      if (moduleName === 'CoreModule') {
-        moduleInstance = new ModuleClass(this.instagramBot);
-      } else if (moduleName === 'HelpModule') {
+      if (moduleName === 'HelpModule') {
         moduleInstance = new ModuleClass(this);
       } else {
-        moduleInstance = new ModuleClass();
+        moduleInstance = new ModuleClass(this.instagramBot);
       }
 
       // Set module manager reference
       moduleInstance.moduleManager = this;
       this.modules.push(moduleInstance);
-      logger.info(`✅ Loaded module: ${moduleName}`);
 
+      logger.info(`📦 Loaded module: ${moduleName}`);
     } catch (error) {
-      logger.error(`❌ Failed to load ${filename}:`, {
-        error: error.message,
-        stack: error.stack
-      });
+      logger.error(`Failed to load ${filename}:`, error.message);
     }
   }
 
@@ -89,40 +61,21 @@ export class ModuleManager {
     this.commandRegistry.clear();
     
     for (const module of this.modules) {
-      try {
-        const commands = module.getCommands();
-        logger.info(`📋 Module ${module.constructor.name} has commands:`, Object.keys(commands));
-        
-        for (const [name, command] of Object.entries(commands)) {
-          const fullCommand = {
-            ...command,
-            module: module,
-            moduleName: module.name || module.constructor.name.replace('Module', '').toLowerCase()
-          };
-          
-          this.commandRegistry.set(name.toLowerCase(), fullCommand);
-          logger.info(`📌 Registered command: ${name} from ${module.constructor.name}`);
-        }
-      } catch (error) {
-        logger.error(`❌ Error building commands for ${module.constructor.name}:`, error.message);
+      const commands = module.getCommands();
+      for (const [name, command] of Object.entries(commands)) {
+        this.commandRegistry.set(name.toLowerCase(), {
+          ...command,
+          module: module,
+          moduleName: module.name || module.constructor.name.replace('Module', '').toLowerCase()
+        });
       }
     }
-    
-    logger.info(`📚 Total commands registered: ${this.commandRegistry.size}`);
+
+    logger.info(`🎯 Registered ${this.commandRegistry.size} commands`);
   }
 
   getCommand(name) {
-    const command = this.commandRegistry.get(name.toLowerCase());
-    logger.info(`🔍 Command lookup for "${name}":`, {
-      found: !!command,
-      available: Array.from(this.commandRegistry.keys())
-    });
-    return command;
-  }
-
-  // ✅ This was missing!
-  getAvailableCommands() {
-    return Array.from(this.commandRegistry.keys());
+    return this.commandRegistry.get(name.toLowerCase());
   }
 
   getAllCommands() {
@@ -139,21 +92,33 @@ export class ModuleManager {
   async processMessage(message) {
     for (const module of this.modules) {
       try {
-        message = await module.process(message);
+        if (module.process) {
+          message = await module.process(message);
+        }
       } catch (error) {
-        logger.error(`❌ Module ${module.constructor.name} processing error:`, error.message);
+        logger.error(`Module ${module.name} process error:`, error.message);
       }
     }
     return message;
   }
+async init() {
+  const { Collection } = await import('../structures/Collection.js');
+  this.commandRegistry = new Collection();
+  await this.loadModules();
+}
 
   async cleanup() {
     for (const module of this.modules) {
       if (module.cleanup) {
-        await module.cleanup();
+        try {
+          await module.cleanup();
+        } catch (error) {
+          logger.error(`Module ${module.name} cleanup error:`, error.message);
+        }
       }
     }
     this.modules = [];
     this.commandRegistry.clear();
+    logger.info('🧹 Cleaned up all modules');
   }
 }
