@@ -3,11 +3,10 @@ import fs from 'fs';
 import path from 'path';
 
 export class ModuleManager {
-  constructor(instagramBot = null, telegramBridge = null) {
+  constructor(instagramBot = null) {
     this.modules = [];
     this.commandRegistry = new Map();
     this.instagramBot = instagramBot;
-    this.telegramBridge = telegramBridge;
     this.modulesPath = './modules';
   }
 
