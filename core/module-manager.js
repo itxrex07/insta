@@ -1,14 +1,17 @@
+
 import { logger } from '../utils/utils.js';
 import fs from 'fs';
 import path from 'path';
 
 export class ModuleManager {
-  constructor(instagramBot = null) {
+  constructor(instagramBot = null, telegramBridge = null) {
     this.modules = [];
-    this.commandRegistry = null; // will be initialized in init()
+    this.commandRegistry = new Map();
     this.instagramBot = instagramBot;
+    this.telegramBridge = telegramBridge;
     this.modulesPath = './modules';
   }
+
   async loadModules() {
     try {
       const moduleFiles = fs.readdirSync(this.modulesPath)
@@ -23,8 +26,7 @@ export class ModuleManager {
       logger.info(`🔌 Loaded ${this.modules.length} modules`);
 
     } catch (error) {
-      logger.error('Module loading error:', error.stack || error.message);
-
+      logger.error('Module loading error:', error.message);
     }
   }
 
@@ -41,17 +43,18 @@ export class ModuleManager {
       let moduleInstance;
       const moduleName = ModuleClass.name;
 
-      if (moduleName === 'HelpModule') {
+      if (moduleName === 'CoreModule') {
+        moduleInstance = new ModuleClass(this.instagramBot);
+      } else if (moduleName === 'HelpModule') {
         moduleInstance = new ModuleClass(this);
       } else {
-        moduleInstance = new ModuleClass(this.instagramBot);
+        moduleInstance = new ModuleClass();
       }
 
       // Set module manager reference
       moduleInstance.moduleManager = this;
       this.modules.push(moduleInstance);
 
-      logger.info(`📦 Loaded module: ${moduleName}`);
     } catch (error) {
       logger.error(`Failed to load ${filename}:`, error.message);
     }
@@ -70,8 +73,6 @@ export class ModuleManager {
         });
       }
     }
-
-    logger.info(`🎯 Registered ${this.commandRegistry.size} commands`);
   }
 
   getCommand(name) {
@@ -92,33 +93,21 @@ export class ModuleManager {
   async processMessage(message) {
     for (const module of this.modules) {
       try {
-        if (module.process) {
-          message = await module.process(message);
-        }
+        message = await module.process(message);
       } catch (error) {
-        logger.error(`Module ${module.name} process error:`, error.message);
+        // Silent fail for module processing
       }
     }
     return message;
   }
-async init() {
-  const { Collection } = await import('../structures/Collection.js');
-  this.commandRegistry = new Collection();
-  await this.loadModules();
-}
 
   async cleanup() {
     for (const module of this.modules) {
       if (module.cleanup) {
-        try {
-          await module.cleanup();
-        } catch (error) {
-          logger.error(`Module ${module.name} cleanup error:`, error.message);
-        }
+        await module.cleanup();
       }
     }
     this.modules = [];
     this.commandRegistry.clear();
-    logger.info('🧹 Cleaned up all modules');
   }
 }
