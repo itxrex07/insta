@@ -62,6 +62,13 @@ class HyperInsta {
         logger.debug('📩 Message received by index, forwarding to MessageHandler...');
         try {
           await this.messageHandler.handleMessage(instagramMessage);
+          // --- Forward to Telegram Bridge ---
+          // After modules handle it, forward it via the bridge
+          if (this.telegramBridge?.enabled) {
+             await this.telegramBridge.forwardInstagramMessage(instagramMessage);
+          } else if (config.telegram?.token) { // Configured but failed init
+              logger.warn('⚠️ Telegram is configured but bridge is not enabled. Message not forwarded.');
+          }
         } catch (handlerError) {
           logger.error('❌ Error in main message handling chain:', handlerError.message);
         }
