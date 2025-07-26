@@ -2,7 +2,8 @@ import { InstagramBot } from './core/bot.js';
 import { TelegramBridge } from './telegram/bridge.js';
 import { logger } from './utils/utils.js';
 import { config } from './config.js';
-
+import { ModuleManager } from './core/module-manager.js'; 
+import { MessageHandler } from './core/message-handler.js'; 
 console.clear();
 
 class HyperInsta {
