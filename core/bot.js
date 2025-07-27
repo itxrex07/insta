@@ -61,38 +61,54 @@ async login() {
       // Fall through to cookie login if session file access fails
     }
 
-    // Step 2 & 3: Fallback to cookies.json ONLY if session login wasn't successful
-    if (!loginSuccess) {
-      try {
-        this.log('INFO', '📂 Attempting login using cookies.json...');
-        await this.loadCookiesFromJson('./cookies.json');
-        
-        // --- Add specific error handling for currentUser() after cookies ---
-        try {
-          const currentUserResponse = await this.ig.account.currentUser(); // Validate cookies
-          this.log('INFO', `✅ Logged in using cookies.json as @${currentUserResponse.username}`);
-          loginSuccess = true;
+   // Step 2: Try cookies.json if session login wasn't successful
+if (!loginSuccess) {
+  try {
+    this.log('INFO', '📂 Attempting login using cookies.json...');
+    await this.loadCookiesFromJson('./cookies.json');
 
-          // Step 3: Save session after successful cookie login
-          const session = await this.ig.state.serialize();
-          delete session.constants; // Remove constants before saving
-          await fs.writeFile('./session.json', JSON.stringify(session, null, 2)); // Use fs.promises
-          this.log('INFO', '💾 session.json saved from cookie-based login');
-        } catch (cookieValidationError) {
-           this.log('ERROR', '❌ Failed to validate login using cookies.json:', cookieValidationError.message);
-           this.log('DEBUG', 'Cookie validation error stack:', cookieValidationError.stack);
-           // Re-throw to be caught by the outer catch block
-           throw new Error(`Cookie login validation failed: ${cookieValidationError.message}`);
-        }
-        // --- End addition ---
-        
-      } catch (cookieLoadError) {
-          this.log('ERROR', '❌ Failed to load or process cookies.json:', cookieLoadError.message);
-          this.log('DEBUG', 'Cookie loading error stack:', cookieLoadError.stack);
-          // Re-throw to be caught by the outer catch block
-          throw new Error(`Cookie loading failed: ${cookieLoadError.message}`);
-      }
+    try {
+      const currentUserResponse = await this.ig.account.currentUser();
+      this.log('INFO', `✅ Logged in using cookies.json as @${currentUserResponse.username}`);
+      loginSuccess = true;
+
+      const session = await this.ig.state.serialize();
+      delete session.constants;
+      await fs.writeFile('./session.json', JSON.stringify(session, null, 2));
+      this.log('INFO', '💾 session.json saved from cookie-based login');
+    } catch (cookieValidationError) {
+      this.log('ERROR', '❌ Failed to validate login using cookies.json:', cookieValidationError.message);
+      this.log('DEBUG', 'Cookie validation error stack:', cookieValidationError.stack);
+      // Continue to fresh login
     }
+  } catch (cookieLoadError) {
+    this.log('ERROR', '❌ Failed to load or process cookies.json:', cookieLoadError.message);
+    this.log('DEBUG', 'Cookie loading error stack:', cookieLoadError.stack);
+    // Continue to fresh login
+  }
+}
+
+// Step 3: Fallback to fresh login using username & password if enabled
+if (!loginSuccess && config.instagram?.password) {
+  try {
+    this.log('INFO', '🔐 Attempting fresh login with username and password...');
+    await this.ig.account.login(username, config.instagram.password);
+
+    this.log('INFO', `✅ Fresh login successful as @${username}`);
+    loginSuccess = true;
+
+    const session = await this.ig.state.serialize();
+    delete session.constants;
+    await fs.writeFile('./session.json', JSON.stringify(session, null, 2));
+    this.log('INFO', '💾 session.json saved after fresh login');
+
+  } catch (loginError) {
+    this.log('ERROR', '❌ Fresh login failed:', loginError.message);
+    this.log('DEBUG', 'Fresh login error stack:', loginError.stack);
+    throw new Error(`Fresh login failed: ${loginError.message}`);
+  }
+}
+
 
     if (loginSuccess) {
       // --- Register handlers and connect AFTER successful login ---
