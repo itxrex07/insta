@@ -6,8 +6,8 @@ export const config = {
   },
   
   telegram: {
-    token: '7580382614:AAH30PW6TFmgRzbC7HUXIHQ35GpndbJOIEI',
-    bridgeGroupId: '-1002287300661',
+    botToken: '7580382614:AAH30PW6TFmgRzbC7HUXIHQ35GpndbJOIEI',
+    chatId: '-1002287300661',
     adminUserId: '7405203657',
     enabled: true,
   },
