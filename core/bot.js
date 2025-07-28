@@ -687,7 +687,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((error) => {
     console.error('❌ Unhandled error in main execution:', error.message);
     process.exit(1);
-  });
+  }); 
 }
 
 // Export for external usage
