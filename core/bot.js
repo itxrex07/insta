@@ -1,3 +1,5 @@
+JavaScript
+
 // instagram-bot.js (or your main bot file name)
 import { IgApiClient } from 'instagram-private-api';
 import { withRealtime } from 'instagram_mqtt';
@@ -5,6 +7,7 @@ import { GraphQLSubscriptions } from 'instagram_mqtt';
 import { SkywalkerSubscriptions } from 'instagram_mqtt';
 // Use fs.promises for async/await compatibility
 import { promises as fs } from 'fs';
+import path from 'path'; // <--- Ensure path is imported for temporary files
 import tough from 'tough-cookie';
 import { ModuleManager } from './module-manager.js';
 import { MessageHandler } from './message-handler.js';
@@ -432,8 +435,7 @@ class InstagramBot {
   //       this.log('DEBUG', `✅ Message ${message.item_id} is new (by timestamp)`);
   //     } else {
   //       this.log('DEBUG', `❌ Message ${message.item_id} is old (by timestamp)`);
-  //     }
-  //     return isNew;
+  //     }<br>  //     return isNew;
   //   } catch (error) {
   //     this.log('ERROR', '❌ Error checking message timestamp:', error.message);
   //     return true; // Default to processing
@@ -449,10 +451,15 @@ class InstagramBot {
       }
       // Try to find sender info from thread data (more reliable if present)
       let senderUsername = `user_${message.user_id}`;
+      // Initialize profilePicUrl to null
+      let profilePicUrl = null;
       if (eventData.thread?.users) {
         const sender = eventData.thread.users.find(u => u.pk?.toString() === message.user_id?.toString());
         if (sender?.username) {
           senderUsername = sender.username;
+        }
+        if (sender?.profile_pic_url) {
+            profilePicUrl = sender.profile_pic_url;
         }
       }
       // Create a processed message object
@@ -461,12 +468,21 @@ class InstagramBot {
         text: message.text || '', // Ensure text is always a string
         senderId: message.user_id,
         senderUsername: senderUsername,
+        profilePicUrl: profilePicUrl, // Add profilePicUrl to the processed message
         timestamp: new Date(parseInt(message.timestamp, 10) / 1000), // Convert microseconds
         threadId: eventData.thread?.thread_id || message.thread_id || 'unknown_thread',
         threadTitle: eventData.thread?.thread_title || message.thread_title || 'Direct Message',
         type: message.item_type || 'unknown_type',
         // Include raw data if handlers need access to full structure
-        raw: message
+        raw: message,
+
+        // Add media properties for bridge to use
+        media: message.media,
+        animated_media: message.animated_media,
+        media_share: message.media_share,
+        link: message.link,
+        placeholder: message.placeholder,
+        like: message.like,
       };
       this.log('INFO', `💬 [${processedMessage.threadTitle}] New message from @${processedMessage.senderUsername}: "${processedMessage.text}"`);
       // Execute registered message handlers sequentially
@@ -514,6 +530,70 @@ class InstagramBot {
       throw error;
     }
   }
+
+  // --- New methods for sending media ---
+  async sendPhoto(threadId, filePath, caption = '') {
+    try {
+      if (!threadId || !filePath) {
+        throw new Error('Thread ID and file path are required to send a photo.');
+      }
+      const thread = this.ig.entity.directThread(threadId);
+      if (!thread) {
+        throw new Error(`Instagram thread ${threadId} not found or accessible.`);
+      }
+
+      const imageBuffer = await fs.readFile(filePath);
+
+      const { uploads } = await this.ig.upload.photo({
+          file: imageBuffer,
+      });
+
+      await thread.broadcastPhoto({
+          mediaId: uploads.media.pk,
+          caption: caption
+      });
+      this.log('INFO', `📤 Photo sent successfully from ${filePath} to thread ${threadId}`);
+    } catch (error) {
+      this.log('ERROR', `❌ Failed to send photo from ${filePath} to thread ${threadId}:`, error.message);
+      throw error;
+    }
+  }
+
+  async sendVideo(threadId, filePath, caption = '') {
+    try {
+      if (!threadId || !filePath) {
+        throw new Error('Thread ID and file path are required to send a video.');
+      }
+      const thread = this.ig.entity.directThread(threadId);
+      if (!thread) {
+        throw new Error(`Instagram thread ${threadId} not found or accessible.`);
+      }
+
+      const videoBuffer = await fs.readFile(filePath);
+
+      // For video, a cover frame (thumbnail) is often needed.
+      // Generating a thumbnail on-the-fly requires additional libraries like 'ffmpeg'.
+      // For this example, we proceed without a coverImage, which might cause issues
+      // if Instagram's API strictly requires it or if the video format is problematic.
+      // If you encounter issues, consider adding a video thumbnail generation step.
+
+      const { uploads } = await this.ig.upload.video({
+          video: videoBuffer,
+          // coverImage: coverImageBuffer, // Uncomment and provide a buffer if you generate a thumbnail
+      });
+
+      await thread.broadcastVideo({
+          mediaId: uploads.media.pk,
+          caption: caption
+      });
+      this.log('INFO', `📤 Video sent successfully from ${filePath} to thread ${threadId}`);
+    } catch (error) {
+      this.log('ERROR', `❌ Failed to send video from ${filePath} to thread ${threadId}:`, error.message);
+      throw error;
+    }
+  }
+  // --- End new methods for sending media ---
+
 
   // --- Methods for Missing Features from Example ---
   // Subscribe to live comments on a specific broadcast
@@ -643,88 +723,49 @@ class InstagramBot {
 
     // --- Clear Push Context on Disconnect ---
     this.pushContext = {}; // Clear push context on disconnect
-    this.log('DEBUG', '🧹 [Push] Cleared push context on disconnect.');
-    // --- End Clear Push Context ---
 
-    // Clear the message requests monitor if it exists
     if (this.messageRequestsMonitorInterval) {
-      clearInterval(this.messageRequestsMonitorInterval);
-      this.messageRequestsMonitorInterval = null;
-      this.log('INFO', '🕒 Message requests monitor stopped.');
+        clearInterval(this.messageRequestsMonitorInterval);
+        this.messageRequestsMonitorInterval = null;
+        this.log('INFO', '🛑 Stopped message requests monitor.');
     }
+
     try {
-      // Inform Instagram the "app" is going to background before disconnecting
-      this.log('DEBUG', '📱 Setting foreground state to background before disconnect...');
-      await this.setForegroundState(false, false, 900); // Ignore result, proceed with disconnect
-    } catch (stateError) {
-      this.log('WARN', '⚠️ Error setting background state before disconnect:', stateError.message);
+        if (this.ig.realtime.isConnected()) {
+            await this.ig.realtime.disconnect();
+            this.log('INFO', '🔌 Instagram Realtime connection disconnected.');
+        } else {
+            this.log('INFO', '🔌 Instagram Realtime connection was not active.');
+        }
+    } catch (error) {
+        this.log('ERROR', '❌ Error during Instagram Realtime disconnect:', error.message);
     }
+    
+    // Clear processed message IDs on disconnect to avoid issues on reconnect
+    this.processedMessageIds.clear(); 
+    this.log('INFO', '🧹 Cleared processed message IDs.');
+
+    this.log('INFO', '✅ Instagram bot disconnected.');
+  }
+
+  // New method to get thread info, useful for Telegram bridge to name topics
+  async getThreadInfo(threadId) {
     try {
-      if (this.ig.realtime && typeof this.ig.realtime.disconnect === 'function') {
-        await this.ig.realtime.disconnect();
-        this.log('INFO', '✅ Disconnected from Instagram realtime successfully');
-      } else {
-        this.log('WARN', '⚠️ Realtime client was not initialized or disconnect method not found');
-      }
-    } catch (disconnectError) {
-      this.log('WARN', '⚠️ Error during disconnect:', disconnectError.message);
-      // Don't re-throw, as we are shutting down
+        const thread = await this.ig.directThread.info(threadId);
+        // Extract relevant info, e.g., thread_title, users
+        const threadTitle = thread.thread_title || (thread.users.map(u => u.username).join(', ') || `Thread ${threadId.substring(0, 8)}`);
+        return {
+            threadId: thread.thread_id,
+            title: threadTitle,
+            users: thread.users, // Full user objects if needed
+            isGroup: thread.thread_type === 'group'
+        };
+    } catch (error) {
+        this.log('ERROR', `❌ Failed to get thread info for ${threadId}:`, error.message);
+        throw error;
     }
   }
+
 }
 
-// Main execution logic
-async function main() {
-  let bot;
-  try {
-    bot = new InstagramBot();
-    await bot.login(); // ✅ Login with cookies or credentials
-    // ✅ Load all modules
-    const moduleManager = new ModuleManager(bot);
-    await moduleManager.loadModules();
-    // ✅ Setup message handler
-    const messageHandler = new MessageHandler(bot, moduleManager, null); // Assuming null is okay for the third arg
-    // ✅ Route incoming messages to the handler
-    bot.onMessage((message) => messageHandler.handleMessage(message));
-    // ✅ Start monitoring message requests
-    await bot.startMessageRequestsMonitor(); // Use default interval
-    console.log('🚀 Bot is running with full module support. Type .help or use your commands.');
-    // ✅ Periodic heartbeat/status log (more frequent for debugging, can be longer)
-    setInterval(() => {
-      console.log(`💓 [${new Date().toISOString()}] Bot heartbeat - Running: ${bot.isRunning}`); // Simplified heartbeat
-    }, 300000); // Every 5 minutes
-    // ✅ Graceful shutdown handling
-    const shutdownHandler = async () => {
-      console.log('\n👋 [SIGINT/SIGTERM] Shutting down gracefully...');
-      if (bot) {
-        await bot.disconnect();
-      }
-      console.log('🛑 Shutdown complete.');
-      process.exit(0);
-    };
-    process.on('SIGINT', shutdownHandler);
-    process.on('SIGTERM', shutdownHandler); // Handle termination signals
-  } catch (error) {
-    console.error('❌ Bot failed to start:', error.message);
-    // Attempt cleanup if bot was partially initialized
-    if (bot) {
-      try {
-        await bot.disconnect();
-      } catch (disconnectError) {
-        console.error('❌ Error during cleanup disconnect:', disconnectError.message);
-      }
-    }
-    process.exit(1);
-  }
-}
-
-// Run main only if this file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((error) => {
-    console.error('❌ Unhandled error in main execution:', error.message);
-    process.exit(1);
-  });
-}
-
-// Export for external usage
 export { InstagramBot };
