@@ -1,7 +1,7 @@
 export const config = {
   instagram: {
-    username: process.env.INSTAGRAM_USERNAME || 'ixnicx02',
-    password: process.env.INSTAGRAM_PASSWORD || '',
+    username: process.env.INSTAGRAM_USERNAME || 'ixnickx04',
+    password: process.env.INSTAGRAM_PASSWORD || '12312320',
     useMongoSession: true,
     sessionPath: './session.json',
     cookiesPath: './cookies.json'
@@ -31,14 +31,14 @@ export const config = {
     autoFollowBack: false,
     autoAcceptRequests: false,
     autoMessageNewFollowers: false,
-    welcomeMessage: "Thanks for following! 🎉",
+    welcomeMessage: "Thanks for Comming babe! 🎉",
     checkInterval: 300000, // 5 minutes
     maxFollowsPerHour: 60,
     followDelay: { min: 30000, max: 120000 } // 30s to 2min delay
   },
   
   admin: {
-    users: ['ixnickx02', 'iarshman'],
+    users: ['ixnickx04', 'iarshman'],
     allowedCommands: ['*'] // '*' means all commands
   },
   
