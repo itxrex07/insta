@@ -12,137 +12,161 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export class TelegramBridge {
-  constructor() {
-    this.instagramBot = null;
-    this.telegramBot = null;
-    this.chatMappings = new Map();
-    this.userMappings = new Map();
-    this.tempDir = path.join(__dirname, '..', 'temp', 'telegram-bridge');
-    this.db = null;
-    this.collection = null;
-    this.telegramChatId = null;
-    this.enabled = false;
-    this.isInitialized = false;
-  }
-
-  async initialize(instagramBotInstance) {
-    if (this.isInitialized) {
-      logger.warn('Telegram bridge already initialized');
-      return;
+    constructor() {
+        this.instagramBot = null; // Will be set later
+        this.telegramBot = null;
+        this.chatMappings = new Map(); // instagramThreadId -> telegramTopicId
+        this.userMappings = new Map(); // instagramUserId -> { username, fullName, firstSeen, messageCount }
+        this.profilePicCache = new Map(); // instagramId (thread/user) -> profilePicUrl
+        this.tempDir = path.join(process.cwd(), 'temp');
+        this.db = null;
+        this.collection = null; // Single 'bridge' collection like WA
+        this.telegramChatId = null; // Supergroup ID for forum
+        this.creatingTopics = new Map(); // instagramThreadId => Promise
+        this.topicVerificationCache = new Map(); // instagramThreadId => boolean (exists)
+        this.enabled = false;
+        this.filters = new Set(); // Placeholder for filters if needed
     }
+    async initialize(instagramBotInstance) {
+        this.instagramBot = instagramBotInstance; // Link to the main Instagram bot instance
 
-    this.instagramBot = instagramBotInstance;
-    const token = config.telegram?.botToken;
-    this.telegramChatId = config.telegram?.chatId;
+        const token = config.telegram?.botToken;
+        this.telegramChatId = config.telegram?.chatId;
 
-    if (!token) {
-      logger.warn('Telegram bot token not found. Bridge disabled.');
-      this.enabled = false;
-      return;
-    }
-
-    if (!this.telegramChatId) {
-      logger.warn('Telegram chat ID not found. Bridge functionality limited.');
-    }
-
-    try {
-      // Initialize Telegram Bot
-      this.telegramBot = new TelegramBot(token, { 
-        polling: {
-          interval: 1000,
-          autoStart: true,
-          params: {
-            timeout: 10
-          }
+        if (!token || token.includes('YOUR_BOT_TOKEN') || !this.telegramChatId || this.telegramChatId.includes('YOUR_CHAT_ID')) {
+            logger.warn('⚠️ Telegram bot token or chat ID not configured for Instagram bridge');
+            return;
         }
-      });
 
-      // Ensure temp directory exists
-      await fs.ensureDir(this.tempDir);
+        try {
+            await this.initializeDatabase();
+            await fs.ensureDir(this.tempDir);
+            this.telegramBot = new TelegramBot(token, {
+                polling: true,
+                // onlyFirstMatch: true // Add if needed
+            });
 
-      // Initialize database
-      await this.initializeDatabase();
+            await this.setupTelegramHandlers();
+            await this.loadMappingsFromDb();
+            await this.loadFiltersFromDb(); // If you want filters
 
-      // Setup event handlers
-      this.setupInstagramHandlers();
-      await this.setupTelegramHandlers();
+            // Set up Instagram event listeners now that Telegram is ready
+            this.setupInstagramHandlers();
 
-      this.enabled = true;
-      this.isInitialized = true;
-      
-      logger.info('Telegram bridge initialized successfully');
-
-      // Test connection
-      await this.testConnection();
-
-    } catch (error) {
-      logger.error('Failed to initialize Telegram bridge:', error.message);
-      this.enabled = false;
-    }
-  }
-
-  async testConnection() {
-    try {
-      const me = await this.telegramBot.getMe();
-      logger.info(`Connected to Telegram as @${me.username}`);
-      
-      if (this.telegramChatId) {
-        const chat = await this.telegramBot.getChat(this.telegramChatId);
-        logger.info(`Connected to chat: ${chat.title || chat.first_name}`);
-      }
-    } catch (error) {
-      logger.error('Telegram connection test failed:', error.message);
-    }
-  }
-
-  async initializeDatabase() {
-    try {
-      this.db = await connectDb();
-      this.collection = this.db.collection('telegram_bridge');
-      await this.loadMappingsFromDb();
-      logger.debug('Telegram bridge database initialized');
-    } catch (error) {
-      logger.error('Failed to initialize bridge database:', error.message);
-    }
-  }
-
-  async loadMappingsFromDb() {
-    if (!this.collection) return;
-
-    try {
-      const mappings = await this.collection.find({ type: 'mapping' }).toArray();
-      mappings.forEach(mapping => {
-        if (mapping.instagramThreadId && mapping.telegramTopicId) {
-          this.chatMappings.set(mapping.instagramThreadId, mapping.telegramTopicId);
+            this.enabled = true;
+            logger.info('✅ Instagram-Telegram bridge initialized');
+        } catch (error) {
+            logger.error('❌ Failed to initialize Instagram-Telegram bridge:', error.message);
+            // Disable bridge on critical init failure
+            this.enabled = false;
         }
-      });
-      logger.debug(`Loaded ${this.chatMappings.size} chat mappings`);
-    } catch (error) {
-      logger.error('Error loading mappings from database:', error.message);
     }
-  }
 
-  async saveMappingToDb(instagramThreadId, telegramTopicId) {
-    if (!this.collection) return;
-
-    try {
-      await this.collection.updateOne(
-        { type: 'mapping', instagramThreadId },
-        { 
-          $set: { 
-            telegramTopicId, 
-            lastUpdated: new Date(),
-            type: 'mapping'
-          } 
-        },
-        { upsert: true }
-      );
-      logger.debug(`Saved mapping: ${instagramThreadId} -> ${telegramTopicId}`);
-    } catch (error) {
-      logger.error('Error saving mapping to database:', error.message);
+    async initializeDatabase() {
+        try {
+            this.db = await connectDb();
+            await this.db.command({ ping: 1 });
+            logger.info('✅ MongoDB connection successful for Instagram bridge');
+            this.collection = this.db.collection('bridge'); // Reuse 'bridge' collection
+            // Create indexes similar to TelegramBridge (adjust field names for Instagram)
+            await this.collection.createIndex({ type: 1, 'data.instagramThreadId': 1 }, { unique: true, partialFilterExpression: { type: 'chat' } });
+            await this.collection.createIndex({ type: 1, 'data.instagramUserId': 1 }, { unique: true, partialFilterExpression: { type: 'user' } });
+            // Add index for profile pictures if stored separately (or store within chat mapping)
+            logger.info('📊 Database initialized for Instagram bridge (single collection: bridge)');
+        } catch (error) {
+            logger.error('❌ Failed to initialize database for Instagram bridge:', error.message);
+            throw error; // Rethrow to potentially stop bridge init
+        }
     }
-  }
 
+    async loadMappingsFromDb() {
+        if (!this.collection) {
+            logger.warn('⚠️ Database collection not available, skipping mapping load');
+            return;
+        }
+        try {
+            const mappings = await this.collection.find({}).toArray();
+            for (const mapping of mappings) {
+                switch (mapping.type) {
+                    case 'chat': // Maps Instagram Thread to Telegram Topic
+                        this.chatMappings.set(mapping.data.instagramThreadId, mapping.data.telegramTopicId);
+                        if (mapping.data.profilePicUrl) {
+                            this.profilePicCache.set(mapping.data.instagramThreadId, mapping.data.profilePicUrl);
+                        }
+                        break;
+                    case 'user': // Maps Instagram User ID to Info
+                        this.userMappings.set(mapping.data.instagramUserId, {
+                            username: mapping.data.username,
+                            fullName: mapping.data.fullName,
+                            firstSeen: mapping.data.firstSeen,
+                            messageCount: mapping.data.messageCount || 0
+                        });
+                        break;
+                }
+            }
+            logger.info(`📊 Loaded Instagram mappings: ${this.chatMappings.size} chats, ${this.userMappings.size} users`);
+        } catch (error) {
+            logger.error('❌ Failed to load Instagram mappings:', error.message);
+        }
+    }
+
+    async saveChatMapping(instagramThreadId, telegramTopicId, profilePicUrl = null) {
+        if (!this.collection) return;
+        try {
+            const updateData = {
+                type: 'chat',
+                data: {
+                    instagramThreadId,
+                    telegramTopicId,
+                    createdAt: new Date(),
+                    lastActivity: new Date()
+                }
+            };
+            if (profilePicUrl) {
+                updateData.data.profilePicUrl = profilePicUrl;
+            }
+            await this.collection.updateOne(
+                { type: 'chat', 'data.instagramThreadId': instagramThreadId },
+                { $set: updateData },
+                { upsert: true }
+            );
+            this.chatMappings.set(instagramThreadId, telegramTopicId);
+            if (profilePicUrl) {
+                this.profilePicCache.set(instagramThreadId, profilePicUrl);
+            }
+            this.topicVerificationCache.delete(instagramThreadId);
+            logger.debug(`✅ Saved chat mapping: ${instagramThreadId} -> ${telegramTopicId}${profilePicUrl ? ' (with profile pic)' : ''}`);
+        } catch (error) {
+            logger.error('❌ Failed to save Instagram chat mapping:', error.message);
+        }
+    }
+
+    async saveUserMapping(instagramUserId, userData) {
+        if (!this.collection) return;
+        try {
+            await this.collection.updateOne(
+                { type: 'user', 'data.instagramUserId': instagramUserId },
+                {
+                    $set: {
+                        type: 'user',
+                        data: {
+                            instagramUserId,
+                            username: userData.username,
+                            fullName: userData.fullName,
+                            firstSeen: userData.firstSeen,
+                            messageCount: userData.messageCount || 0,
+                            lastSeen: new Date()
+                        }
+                    }
+                },
+                { upsert: true }
+            );
+            this.userMappings.set(instagramUserId, userData);
+            logger.debug(`✅ Saved Instagram user mapping: ${instagramUserId} (@${userData.username || 'unknown'})`);
+        } catch (error) {
+            logger.error('❌ Failed to save Instagram user mapping:', error.message);
+        }
+    }
   setupInstagramHandlers() {
     if (!this.instagramBot) {
       logger.error('Instagram bot not provided to bridge');
