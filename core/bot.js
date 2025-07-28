@@ -639,3 +639,56 @@ export class InstagramBot extends EventEmitter {
     }
   }
 }
+// Main execution logic
+async function main() {
+  let bot;
+  try {
+    bot = new InstagramBot();
+    await bot.login(); // ✅ Login with cookies or credentials
+    // ✅ Load all modules
+    const moduleManager = new ModuleManager(bot);
+    await moduleManager.loadModules();
+    // ✅ Setup message handler
+    const messageHandler = new MessageHandler(bot, moduleManager, null); // Assuming null is okay for the third arg
+    // ✅ Route incoming messages to the handler
+    bot.onMessage((message) => messageHandler.handleMessage(message));
+    // ✅ Start monitoring message requests
+    await bot.startMessageRequestsMonitor(); // Use default interval
+    console.log('🚀 Bot is running with full module support. Type .help or use your commands.');
+    // ✅ Periodic heartbeat/status log (more frequent for debugging, can be longer)
+
+    // ✅ Graceful shutdown handling
+    const shutdownHandler = async () => {
+      console.log('\n👋 [SIGINT/SIGTERM] Shutting down gracefully...');
+      if (bot) {
+        await bot.disconnect();
+      }
+      console.log('🛑 Shutdown complete.');
+      process.exit(0);
+    };
+    process.on('SIGINT', shutdownHandler);
+    process.on('SIGTERM', shutdownHandler); // Handle termination signals
+  } catch (error) {
+    console.error('❌ Bot failed to start:', error.message);
+    // Attempt cleanup if bot was partially initialized
+    if (bot) {
+      try {
+        await bot.disconnect();
+      } catch (disconnectError) {
+        console.error('❌ Error during cleanup disconnect:', disconnectError.message);
+      }
+    }
+    process.exit(1);
+  }
+}
+
+// Run main only if this file is executed directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error('❌ Unhandled error in main execution:', error.message);
+    process.exit(1);
+  });
+}
+
+// Export for external usage
+export { InstagramBot };
