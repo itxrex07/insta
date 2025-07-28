@@ -1,6 +1,4 @@
-JavaScript
 
-// instagram-bot.js (or your main bot file name)
 import { IgApiClient } from 'instagram-private-api';
 import { withRealtime } from 'instagram_mqtt';
 import { GraphQLSubscriptions } from 'instagram_mqtt';
