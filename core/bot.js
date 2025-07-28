@@ -1,17 +1,22 @@
 import { IgApiClient } from 'instagram-private-api';
-import { withRealtime } from 'instagram_mqtt';
-import { GraphQLSubscriptions } from 'instagram_mqtt';
-import { SkywalkerSubscriptions } from 'instagram_mqtt';
+import { withFbnsAndRealtime, GraphQLSubscriptions, SkywalkerSubscriptions } from 'instagram_mqtt';
 import { promises as fs } from 'fs';
+import { promisify } from 'util';
+import { writeFile, readFile, exists } from 'fs';
 import tough from 'tough-cookie';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { EventEmitter } from 'events';
+import camelcaseKeys from 'camelcase-keys';
+
+const writeFileAsync = promisify(writeFile);
+const readFileAsync = promisify(readFile);
+const existsAsync = promisify(exists);
 
 export class InstagramBot extends EventEmitter {
   constructor() {
     super();
-    this.ig = withRealtime(new IgApiClient());
+    this.ig = withFbnsAndRealtime(new IgApiClient());
     this.isRunning = false;
     this.processedMessageIds = new Set();
     this.maxProcessedMessageIds = 1000;
@@ -22,7 +27,7 @@ export class InstagramBot extends EventEmitter {
 
   async login() {
     try {
-      const username = config.instagram.username;
+      const username = config.instagram.username || process.env.IG_USERNAME || '';
       if (!username) {
         throw new Error('Instagram username is required');
       }
@@ -30,7 +35,10 @@ export class InstagramBot extends EventEmitter {
       this.ig.state.generateDevice(username);
       let loginSuccess = false;
 
-      // Try session first
+      // Try reading FBNS/Realtime state first
+      await this.readState();
+
+      // Try session login
       if (await this.trySessionLogin()) {
         loginSuccess = true;
       }
@@ -39,7 +47,7 @@ export class InstagramBot extends EventEmitter {
         loginSuccess = true;
       }
       // Try fresh login if both failed
-      else if (config.instagram.password && await this.tryFreshLogin()) {
+      else if ((config.instagram.password || process.env.IG_PASSWORD) && await this.tryFreshLogin()) {
         loginSuccess = true;
       }
 
@@ -47,11 +55,14 @@ export class InstagramBot extends EventEmitter {
         throw new Error('All login methods failed');
       }
 
-      await this.setupRealtime();
+      // Subscribe to request end for saving state
+      this.ig.request.end$.subscribe(() => this.saveState());
+
+      // Setup FBNS and Realtime connections
+      await this.setupConnections();
       this.isRunning = true;
+      logger.info('Instagram bot is now running with FBNS and Realtime support');
       this.emit('ready');
-      
-      logger.info('Instagram bot is now running and listening for messages');
       return true;
 
     } catch (error) {
@@ -89,7 +100,8 @@ export class InstagramBot extends EventEmitter {
 
   async tryFreshLogin() {
     try {
-      await this.ig.account.login(config.instagram.username, config.instagram.password);
+      const password = config.instagram.password || process.env.IG_PASSWORD || '';
+      await this.ig.account.login(config.instagram.username || process.env.IG_USERNAME, password);
       await this.saveSession();
       logger.info('Fresh login successful');
       return true;
@@ -131,30 +143,66 @@ export class InstagramBot extends EventEmitter {
     }
   }
 
-  async setupRealtime() {
-    this.registerRealtimeHandlers();
-    
-    await this.ig.realtime.connect({
-      graphQlSubs: [
-        GraphQLSubscriptions.getAppPresenceSubscription(),
-        GraphQLSubscriptions.getZeroProvisionSubscription(this.ig.state.phoneId),
-        GraphQLSubscriptions.getDirectStatusSubscription(),
-        GraphQLSubscriptions.getDirectTypingSubscription(this.ig.state.cookieUserId),
-        GraphQLSubscriptions.getAsyncAdSubscription(this.ig.state.cookieUserId),
-      ],
-      skywalkerSubs: [
-        SkywalkerSubscriptions.directSub(this.ig.state.cookieUserId),
-        SkywalkerSubscriptions.liveSub(this.ig.state.cookieUserId),
-      ],
-      irisData: await this.ig.feed.directInbox().request(),
-    });
+  async saveState() {
+    try {
+      await writeFileAsync('state.json', await this.ig.exportState(), { encoding: 'utf8' });
+      logger.debug('FBNS/Realtime state saved successfully');
+    } catch (error) {
+      logger.error('Failed to save FBNS/Realtime state:', error.message);
+    }
   }
 
-  registerRealtimeHandlers() {
-    // Message handler
+  async readState() {
+    try {
+      if (!(await existsAsync('state.json'))) return;
+      await this.ig.importState(await readFileAsync('state.json', { encoding: 'utf8' }));
+      logger.debug('FBNS/Realtime state loaded successfully');
+    } catch (error) {
+      logger.error('Failed to load FBNS/Realtime state:', error.message);
+    }
+  }
+
+  async setupConnections() {
+    this.registerHandlers();
+    
+    try {
+      await this.ig.realtime.connect({
+        graphQlSubs: [
+          GraphQLSubscriptions.getAppPresenceSubscription(),
+          GraphQLSubscriptions.getZeroProvisionSubscription(this.ig.state.phoneId),
+          GraphQLSubscriptions.getDirectStatusSubscription(),
+          GraphQLSubscriptions.getDirectTypingSubscription(this.ig.state.cookieUserId),
+          GraphQLSubscriptions.getAsyncAdSubscription(this.ig.state.cookieUserId),
+        ],
+        skywalkerSubs: [
+          SkywalkerSubscriptions.directSub(this.ig.state.cookieUserId),
+          SkywalkerSubscriptions.liveSub(this.ig.state.cookieUserId),
+        ],
+        irisData: await this.ig.feed.directInbox().request(),
+        connectOverrides: {},
+        socksOptions: config.proxy ? {
+          type: config.proxy.type || 5,
+          host: config.proxy.host,
+          port: config.proxy.port,
+          userId: config.proxy.username,
+          password: config.proxy.password,
+        } : undefined,
+      });
+
+      await this.ig.fbns.connect();
+      logger.info('FBNS and Realtime connections established');
+    } catch (error) {
+      logger.error('Failed to establish connections:', error.message);
+      throw error;
+    }
+  }
+
+  registerHandlers() {
+    // Realtime (MQTT) Handlers
     this.ig.realtime.on('message', async (data) => {
       try {
         if (!data.message || !this.isNewMessageById(data.message.item_id, data.message.thread_id)) {
+          logger.debug(`Message ${data.message.item_id} filtered as duplicate`);
           return;
         }
         await this.handleMessage(data.message, data);
@@ -163,7 +211,6 @@ export class InstagramBot extends EventEmitter {
       }
     });
 
-    // Direct message handler
     this.ig.realtime.on('direct', async (data) => {
       try {
         if (data.message && this.isNewMessageById(data.message.item_id, data.message.thread_id)) {
@@ -174,10 +221,10 @@ export class InstagramBot extends EventEmitter {
       }
     });
 
-    // Push notification handler
     this.ig.realtime.on('push', async (data) => {
       try {
-        const { collapseKey, payload } = data;
+        const { collapseKey, payload } = camelcaseKeys(data, { deep: true });
+        logger.info(`Push notification received, collapseKey: ${collapseKey}`);
         if (collapseKey === 'direct_v2_message') {
           const threadIdMatch = payload?.match?.(/thread_id=(\d+)/);
           const itemIdMatch = payload?.match?.(/item_id=([^&]+)/);
@@ -190,14 +237,25 @@ export class InstagramBot extends EventEmitter {
               this.pushContext[threadId] = new Set();
             }
             this.pushContext[threadId].add(itemId);
+            
+            logger.info(`Push notification - Thread ID: ${threadId}, Item ID: ${itemId}`);
+            this.emit('push', { threadId, itemId, payload });
+            
+            // Cleanup push context if too large
+            if (Object.keys(this.pushContext).length > 100) {
+              this.pushContext = {};
+              logger.debug('Cleared push context cache (size limit)');
+            }
           }
+        } else if (collapseKey === 'consolidated_notification_ig' || collapseKey?.startsWith('notification')) {
+          this.ig.realtime.emit('activity', data);
+          logger.info('Forwarded activity notification');
         }
       } catch (error) {
         logger.error('Error processing push notification:', error.message);
       }
     });
 
-    // Connection handlers
     this.ig.realtime.on('connect', () => {
       logger.info('Realtime connection established');
       this.connectionRetries = 0;
@@ -214,6 +272,82 @@ export class InstagramBot extends EventEmitter {
       this.isRunning = false;
       this.handleConnectionError();
     });
+
+    this.ig.realtime.on('receive', (topic, messages) => {
+      const topicStr = String(topic || '');
+      if (topicStr.includes('direct') || topicStr.includes('message') || topicStr.includes('iris')) {
+        logger.debug(`Received on topic: ${topicStr}`);
+      } else {
+        logger.trace(`Received on other topic: ${topicStr}`);
+      }
+    });
+
+    this.ig.realtime.on('threadUpdate', (data) => {
+      logger.info('Thread update event received');
+      logger.debug('Thread update details:', JSON.stringify(data, null, 2));
+    });
+
+    this.ig.realtime.on('realtimeSub', (data) => {
+      logger.info('Generic realtime subscription event received');
+      logger.debug('RealtimeSub details:', JSON.stringify(data, null, 2));
+    });
+
+    this.ig.realtime.on('presence', (data) => {
+      logger.info('Presence update event received');
+      logger.debug('Presence details:', JSON.stringify(data, null, 2));
+    });
+
+    this.ig.realtime.on('typing', (data) => {
+      logger.info('Typing indicator event received');
+      logger.debug('Typing details:', JSON.stringify(data, null, 2));
+    });
+
+    this.ig.realtime.on('messageStatus', (data) => {
+      logger.info('Message status update event received');
+      logger.debug('MessageStatus details:', JSON.stringify(data, null, 2));
+    });
+
+    this.ig.realtime.on('liveNotification', (data) => {
+      logger.info('Live stream notification event received');
+      logger.debug('LiveNotification details:', JSON.stringify(data, null, 2));
+    });
+
+    this.ig.realtime.on('activity', (data) => {
+      logger.info('Activity notification event received');
+      logger.debug('Activity details:', JSON.stringify(data, null, 2));
+    });
+
+    this.ig.realtime.on('reconnect', () => {
+      logger.info('Realtime client is attempting to reconnect');
+    });
+
+    this.ig.realtime.on('debug', (data) => {
+      logger.trace('Realtime debug info:', data);
+    });
+
+    // FBNS Handlers
+    this.ig.fbns.on('push', (data) => {
+      logger.info('FBNS push notification received');
+      logger.debug('FBNS push details:', JSON.stringify(data, null, 2));
+      this.emit('fbnsPush', data);
+    });
+
+    this.ig.fbns.on('auth', async (auth) => {
+      logger.info('FBNS auth received');
+      logger.debug('FBNS auth details:', JSON.stringify(auth, null, 2));
+      await this.saveState();
+      this.emit('fbnsAuth', auth);
+    });
+
+    this.ig.fbns.on('error', (error) => {
+      logger.error('FBNS error:', error.message);
+      this.emit('fbnsError', error);
+    });
+
+    this.ig.fbns.on('warning', (warning) => {
+      logger.warn('FBNS warning:', warning.message);
+      this.emit('fbnsWarning', warning);
+    });
   }
 
   async handleConnectionError() {
@@ -223,7 +357,7 @@ export class InstagramBot extends EventEmitter {
       
       setTimeout(async () => {
         try {
-          await this.setupRealtime();
+          await this.setupConnections();
         } catch (error) {
           logger.error('Reconnection failed:', error.message);
           this.handleConnectionError();
@@ -236,13 +370,18 @@ export class InstagramBot extends EventEmitter {
   }
 
   isNewMessageById(messageId, threadId = null) {
-    if (!messageId) return true;
+    if (!messageId) {
+      logger.warn('Attempted to check message ID, but ID was missing');
+      return true;
+    }
     
     if (this.processedMessageIds.has(messageId)) {
+      logger.debug(`Message ${messageId} filtered as duplicate (by ID)`);
       return false;
     }
 
     if (threadId && this.pushContext[threadId]?.has(messageId)) {
+      logger.debug(`Message ${messageId} filtered as duplicate (by Push Context for thread ${threadId})`);
       return false;
     }
 
@@ -260,6 +399,7 @@ export class InstagramBot extends EventEmitter {
   async handleMessage(message, eventData) {
     try {
       if (!message || !message.user_id || !message.item_id) {
+        logger.warn('Received message with missing essential fields');
         return;
       }
 
@@ -284,6 +424,7 @@ export class InstagramBot extends EventEmitter {
         raw: message
       };
 
+      logger.info(`New message from @${senderUsername} in ${processedMessage.threadTitle}: "${processedMessage.text}"`);
       this.emit('message', processedMessage);
       
     } catch (error) {
@@ -293,6 +434,7 @@ export class InstagramBot extends EventEmitter {
 
   async sendMessage(threadId, text) {
     if (!threadId || !text) {
+      logger.warn('sendMessage called with missing threadId or text');
       throw new Error('Thread ID and text are required');
     }
 
@@ -417,7 +559,9 @@ export class InstagramBot extends EventEmitter {
   async getMessageRequests() {
     try {
       const pendingResponse = await this.ig.feed.directPending().request();
-      return pendingResponse.inbox?.threads || [];
+      const threads = pendingResponse.inbox?.threads || [];
+      logger.info(`Fetched ${threads.length} message requests`);
+      return threads;
     } catch (error) {
       logger.error('Error getting message requests:', error.message);
       return [];
@@ -435,15 +579,60 @@ export class InstagramBot extends EventEmitter {
     }
   }
 
+  async declineMessageRequest(threadId) {
+    try {
+      await this.ig.directThread.decline(threadId);
+      logger.info(`Declined message request: ${threadId}`);
+      return true;
+    } catch (error) {
+      logger.error(`Error declining message request ${threadId}:`, error.message);
+      return false;
+    }
+  }
+
+  async subscribeToLiveComments(broadcastId) {
+    try {
+      await this.ig.realtime.graphQlSubscribe(
+        GraphQLSubscriptions.getLiveRealtimeCommentsSubscription(broadcastId)
+      );
+      logger.info(`Subscribed to live comments for broadcast: ${broadcastId}`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to subscribe to live comments for ${broadcastId}:`, error.message);
+      return false;
+    }
+  }
+
+  async setForegroundState(inApp = true, inDevice = true, timeoutSeconds = 60) {
+    try {
+      const timeout = inApp ? Math.max(10, timeoutSeconds) : 900;
+      await this.ig.realtime.direct.sendForegroundState({
+        inForegroundApp: Boolean(inApp),
+        inForegroundDevice: Boolean(inDevice),
+        keepAliveTimeout: timeout,
+      });
+      logger.info(`Foreground state set: App=${inApp}, Device=${inDevice}, Timeout=${timeout}s`);
+      return true;
+    } catch (error) {
+      logger.error('Failed to set foreground state:', error.message);
+      return false;
+    }
+  }
+
   async disconnect() {
     logger.info('Disconnecting from Instagram...');
     this.isRunning = false;
     this.pushContext = {};
 
     try {
+      await this.setForegroundState(false, false, 900);
       if (this.ig.realtime && typeof this.ig.realtime.disconnect === 'function') {
         await this.ig.realtime.disconnect();
-        logger.info('Disconnected from Instagram realtime successfully');
+        logger.info('Disconnected from Instagram Realtime successfully');
+      }
+      if (this.ig.fbns && typeof this.ig.fbns.disconnect === 'function') {
+        await this.ig.fbns.disconnect();
+        logger.info('Disconnected from Instagram FBNS successfully');
       }
     } catch (error) {
       logger.warn('Error during disconnect:', error.message);
