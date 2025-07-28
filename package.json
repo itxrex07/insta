@@ -1,22 +1,49 @@
 {
   "name": "hyper-insta",
-  "version": "1.0.0",
-  "description": "Hyper Insta - Advanced Instagram Bot with Telegram integration and modular system",
+  "version": "2.0.0",
+  "description": "Professional Instagram Bot with Telegram Bridge and Advanced Automation",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "echo \"Linting not configured\" && exit 0"
   },
-  "keywords": ["instagram", "bot", "telegram", "hyper-insta", "automation", "modules"],
-  "author": "Your Name",
+  "keywords": [
+    "instagram",
+    "bot",
+    "telegram",
+    "automation",
+    "social-media",
+    "followers",
+    "messaging",
+    "bridge"
+  ],
+  "author": "Hyper Insta Team",
   "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "dependencies": {
     "instagram-private-api": "^1.46.1",
+    "instagram_mqtt": "^2.0.0",
     "node-telegram-bot-api": "^0.64.0",
-    "fs-extra": "^11.1.1",
-    "axios": "^1.6.0",
+    "fs-extra": "^11.2.0",
+    "axios": "^1.6.2",
     "tough-cookie": "^4.1.3",
-    "mongodb": "^6.3.0"
-  }
+    "mongodb": "^6.3.0",
+    "camelcase-keys": "^8.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/hyper-insta.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/hyper-insta/issues"
+  },
+  "homepage": "https://github.com/your-username/hyper-insta#readme"
 }
