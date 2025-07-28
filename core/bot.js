@@ -1,4 +1,4 @@
-
+// instagram-bot.js (or your main bot file name)
 import { IgApiClient } from 'instagram-private-api';
 import { withRealtime } from 'instagram_mqtt';
 import { GraphQLSubscriptions } from 'instagram_mqtt';
@@ -767,3 +767,9 @@ class InstagramBot {
 }
 
 export { InstagramBot };
+
+// The `main` function and its execution are usually for direct script execution,
+// not when imported as a module. Given `index.js` imports this, `main` should
+// not be directly invoked here, but `HyperInsta` in `index.js` will handle it.
+// Removing the `main` function block that was previously at the end of this file,
+// as `index.js` now orchestrates the bot's lifecycle.
