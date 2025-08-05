@@ -3,30 +3,29 @@ import TelegramBot from 'node-telegram-bot-api';
 import fs from 'fs-extra';
 import path from 'path';
 import axios from 'axios';
-import mime from 'mime-types';
 import { connectDb } from '../utils/db.js';
 import { config } from '../config.js';
-import { logger } from '../utils/utils.js'; // Assuming you have a logger utility
+import { logger } from '../utils/logger.js';
 
 class TelegramBridge {
     constructor() {
-        this.instagramBot = null; // Will be set later
+        this.instagramBot = null;
         this.telegramBot = null;
-        this.chatMappings = new Map(); // instagramThreadId -> telegramTopicId
-        this.userMappings = new Map(); // instagramUserId -> { username, fullName, firstSeen, messageCount }
-        this.profilePicCache = new Map(); // instagramId (thread/user) -> profilePicUrl
+        this.chatMappings = new Map();
+        this.userMappings = new Map();
+        this.profilePicCache = new Map();
         this.tempDir = path.join(process.cwd(), 'temp');
         this.db = null;
-        this.collection = null; // Single 'bridge' collection like WA
-        this.telegramChatId = null; // Supergroup ID for forum
-        this.creatingTopics = new Map(); // instagramThreadId => Promise
-        this.topicVerificationCache = new Map(); // instagramThreadId => boolean (exists)
+        this.collection = null;
+        this.telegramChatId = null;
+        this.creatingTopics = new Map();
+        this.topicVerificationCache = new Map();
         this.enabled = false;
-        this.filters = new Set(); // Placeholder for filters if needed
+        this.filters = new Set();
     }
 
     async initialize(instagramBotInstance) {
-        this.instagramBot = instagramBotInstance; // Link to the main Instagram bot instance
+        this.instagramBot = instagramBotInstance;
 
         const token = config.telegram?.botToken;
         this.telegramChatId = config.telegram?.chatId;
@@ -41,21 +40,18 @@ class TelegramBridge {
             await fs.ensureDir(this.tempDir);
             this.telegramBot = new TelegramBot(token, {
                 polling: true,
-                // onlyFirstMatch: true // Add if needed
             });
 
             await this.setupTelegramHandlers();
             await this.loadMappingsFromDb();
-            await this.loadFiltersFromDb(); // If you want filters
+            await this.loadFiltersFromDb();
 
-            // Set up Instagram event listeners now that Telegram is ready
             this.setupInstagramHandlers();
 
             this.enabled = true;
             logger.info('✅ Instagram-Telegram bridge initialized');
         } catch (error) {
             logger.error('❌ Failed to initialize Instagram-Telegram bridge:', error.message);
-            // Disable bridge on critical init failure
             this.enabled = false;
         }
     }
@@ -65,15 +61,13 @@ class TelegramBridge {
             this.db = await connectDb();
             await this.db.command({ ping: 1 });
             logger.info('✅ MongoDB connection successful for Instagram bridge');
-            this.collection = this.db.collection('bridge'); // Reuse 'bridge' collection
-            // Create indexes similar to TelegramBridge (adjust field names for Instagram)
+            this.collection = this.db.collection('bridge');
             await this.collection.createIndex({ type: 1, 'data.instagramThreadId': 1 }, { unique: true, partialFilterExpression: { type: 'chat' } });
             await this.collection.createIndex({ type: 1, 'data.instagramUserId': 1 }, { unique: true, partialFilterExpression: { type: 'user' } });
-            // Add index for profile pictures if stored separately (or store within chat mapping)
-            logger.info('📊 Database initialized for Instagram bridge (single collection: bridge)');
+            logger.info('📊 Database initialized for Instagram bridge');
         } catch (error) {
             logger.error('❌ Failed to initialize database for Instagram bridge:', error.message);
-            throw error; // Rethrow to potentially stop bridge init
+            throw error;
         }
     }
 
@@ -86,13 +80,13 @@ class TelegramBridge {
             const mappings = await this.collection.find({}).toArray();
             for (const mapping of mappings) {
                 switch (mapping.type) {
-                    case 'chat': // Maps Instagram Thread to Telegram Topic
+                    case 'chat':
                         this.chatMappings.set(mapping.data.instagramThreadId, mapping.data.telegramTopicId);
                         if (mapping.data.profilePicUrl) {
                             this.profilePicCache.set(mapping.data.instagramThreadId, mapping.data.profilePicUrl);
                         }
                         break;
-                    case 'user': // Maps Instagram User ID to Info
+                    case 'user':
                         this.userMappings.set(mapping.data.instagramUserId, {
                             username: mapping.data.username,
                             fullName: mapping.data.fullName,
@@ -166,10 +160,9 @@ class TelegramBridge {
         }
     }
 
-    async updateProfilePicUrl(instagramId, profilePicUrl) { // instagramId can be threadId or userId
+    async updateProfilePicUrl(instagramId, profilePicUrl) {
         if (!this.collection) return;
         try {
-            // Update the chat mapping where instagramId matches threadId
             await this.collection.updateOne(
                 { type: 'chat', 'data.instagramThreadId': instagramId },
                 { $set: { 'data.profilePicUrl': profilePicUrl, 'data.lastProfilePicUpdate': new Date() } }
@@ -195,15 +188,11 @@ class TelegramBridge {
         }
     }
 
-    // --- Topic Management ---
-
     async getOrCreateTopic(instagramThreadId, senderUserId) {
-        // ✅ If topic already cached, return
         if (this.chatMappings.has(instagramThreadId)) {
             return this.chatMappings.get(instagramThreadId);
         }
 
-        // ✅ If another creation is in progress, wait for it
         if (this.creatingTopics.has(instagramThreadId)) {
             logger.debug(`⏳ Topic creation for ${instagramThreadId} already in progress, waiting...`);
             return await this.creatingTopics.get(instagramThreadId);
@@ -217,14 +206,12 @@ class TelegramBridge {
 
             try {
                 let topicName = `Instagram Chat ${instagramThreadId.substring(0, 10)}...`;
-                let iconColor = 0x7ABA3C; // Default green
+                let iconColor = 0x7ABA3C;
 
-                // Try to get better name from user mapping
                 const userInfo = this.userMappings.get(senderUserId?.toString());
                 if (userInfo) {
                     topicName = `@${userInfo.username || userInfo.fullName || senderUserId}`;
                 } else if (senderUserId) {
-                    // Create basic user mapping if not exists
                     topicName = `User ${senderUserId}`;
                     await this.saveUserMapping(senderUserId.toString(), {
                         username: null,
@@ -240,14 +227,12 @@ class TelegramBridge {
 
                 let profilePicUrl = null;
                 try {
-                    // Fetch profile picture for the user (sender of the message)
                     if (senderUserId) {
-                       // Use the instagramBot's ig instance to fetch user info
                        const userInfo = await this.instagramBot.ig.user.info(senderUserId);
                        if (userInfo?.hd_profile_pic_url_info?.url) {
                             profilePicUrl = userInfo.hd_profile_pic_url_info.url;
                        } else if (userInfo?.profile_pic_url) {
-                            profilePicUrl = userInfo.profile_pic_url; // Fallback
+                            profilePicUrl = userInfo.profile_pic_url;
                        }
                        logger.debug(`📸 Fetched profile pic URL for user ${senderUserId}: ${profilePicUrl}`);
                     }
@@ -258,7 +243,6 @@ class TelegramBridge {
                 await this.saveChatMapping(instagramThreadId, topic.message_thread_id, profilePicUrl);
                 logger.info(`🆕 Created Telegram topic: "${topicName}" (ID: ${topic.message_thread_id}) for Instagram thread ${instagramThreadId}`);
 
-                // Send welcome message and profile picture
                 if (config.telegram?.features?.welcomeMessage !== false) {
                     await this.sendWelcomeMessage(topic.message_thread_id, instagramThreadId, senderUserId, profilePicUrl);
                 }
@@ -268,7 +252,7 @@ class TelegramBridge {
                 logger.error('❌ Failed to create Telegram topic:', error.message);
                 return null;
             } finally {
-                this.creatingTopics.delete(instagramThreadId); // ✅ Cleanup after done
+                this.creatingTopics.delete(instagramThreadId);
             }
         })();
 
@@ -276,85 +260,68 @@ class TelegramBridge {
         return await creationPromise;
     }
 
-escapeMarkdownV2(text) {
-  // List of characters that need escaping in MarkdownV2
-  // _ and * are included but handled carefully
-  const specialChars = ['[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-  let escapedText = text;
+    escapeMarkdownV2(text) {
+        const specialChars = ['[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
+        let escapedText = text;
 
-  // Escape special characters
-  specialChars.forEach(char => {
-    const regex = new RegExp(`\\${char}`, 'g');
-    escapedText = escapedText.replace(regex, `\\${char}`);
-  });
+        specialChars.forEach(char => {
+            const regex = new RegExp(`\\${char}`, 'g');
+            escapedText = escapedText.replace(regex, `\\${char}`);
+        });
 
-  // Handle underscores and asterisks: If they are used for formatting, they should be paired.
-  // If they appear literally in data, they should be escaped.
-  // A simple approach: escape all underscores and asterisks that are not already escaped.
-  // This might not be perfect for all Markdown but prevents parsing errors.
-  // More sophisticated parsing is possible but complex.
-  escapedText = escapedText.replace(/(?<!\\)_/g, '\\_'); // Escape unescaped underscores
-  escapedText = escapedText.replace(/(?<!\\)\*/g, '\\*'); // Escape unescaped asterisks
+        escapedText = escapedText.replace(/(?<!\\)_/g, '\\_');
+        escapedText = escapedText.replace(/(?<!\\)\*/g, '\\*');
 
-  return escapedText;
-}
+        return escapedText;
+    }
 
+    async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfilePicUrl = null) {
+        try {
+            const chatId = config.telegram?.chatId;
+            if (!chatId) {
+                logger.error('❌ Telegram chat ID not configured for welcome message');
+                return;
+            }
 
-async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfilePicUrl = null) {
-    try {
-        const chatId = config.telegram?.chatId;
-        if (!chatId) {
-            logger.error('❌ Telegram chat ID not configured for welcome message');
-            return;
-        }
+            let username = 'Unknown';
+            let fullName = 'Unknown User';
+            let userDisplayId = senderUserId ? senderUserId.toString() : 'N/A';
 
-        let topicName = `Instagram Chat ${instagramThreadId.substring(0, 10)}...`;
-        let username = 'Unknown';
-        let fullName = 'Unknown User';
-        let userDisplayId = senderUserId ? senderUserId.toString() : 'N/A';
+            const userInfo = this.userMappings.get(senderUserId?.toString());
+            if (userInfo) {
+                username = userInfo.username || 'No Username';
+                fullName = userInfo.fullName || 'No Full Name';
+            } else if (senderUserId) {
+                username = `user_${senderUserId}`;
+            }
 
-        // Try to get better name from user mapping
-        const userInfo = this.userMappings.get(senderUserId?.toString());
-        if (userInfo) {
-            username = userInfo.username || 'No Username';
-            fullName = userInfo.fullName || 'No Full Name';
-        } else if (senderUserId) {
-            // Basic fallback if mapping wasn't created yet
-            username = `user_${senderUserId}`;
-        }
+            const escapedUsername = this.escapeMarkdownV2(username);
+            const escapedFullName = this.escapeMarkdownV2(fullName);
+            const escapedUserDisplayId = this.escapeMarkdownV2(userDisplayId);
 
-        // --- Escape user data for Markdown ---
-        const escapedUsername = this.escapeMarkdownV2(username);
-        const escapedFullName = this.escapeMarkdownV2(fullName);
-        const escapedUserDisplayId = this.escapeMarkdownV2(userDisplayId);
-        const escapedInstagramThreadId = this.escapeMarkdownV2(instagramThreadId);
-        // --- End escaping ---
-
-        // --- Use MarkdownV2 and escaped data ---
-        // Avoid using '_' for emphasis if the data itself might contain '_'
-        // Use '*' for emphasis or ensure '_' is escaped within the text.
-        let welcomeText = `👤 *Instagram Contact Information*
+            let welcomeText = `👤 *Instagram Contact Information*
 📝 *Username:* ${escapedUsername}
 🆔 *User ID:* ${escapedUserDisplayId}
 🏷️ *Full Name:* ${escapedFullName}
 📅 *First Contact:* ${new Date().toLocaleDateString()}
 💬 Messages from this user will appear here`;
 
-        const sentMessage = await this.telegramBot.sendMessage(chatId, welcomeText, {
-            message_thread_id: topicId,
-            parse_mode: 'MarkdownV2' // Use MarkdownV2 and ensure escaping
-        });
-        await this.telegramBot.pinChatMessage(chatId, sentMessage.message_id);
+            const sentMessage = await this.telegramBot.sendMessage(chatId, welcomeText, {
+                message_thread_id: topicId,
+                parse_mode: 'MarkdownV2'
+            });
+            await this.telegramBot.pinChatMessage(chatId, sentMessage.message_id);
 
-        // Send initial profile picture if available
-        if (initialProfilePicUrl) {
-            await this.sendProfilePictureWithUrl(topicId, instagramThreadId, initialProfilePicUrl, false);
+            if (initialProfilePicUrl) {
+                await this.sendProfilePictureWithUrl(topicId, instagramThreadId, initialProfilePicUrl, false);
+            }
+            logger.info(`🎉 Welcome message sent successfully for thread ${instagramThreadId}`);
+        } catch (error) {
+            const errorMessage = error.response?.body?.description || error.message;
+            logger.error(`❌ Failed to send welcome message for thread ${instagramThreadId}:`, errorMessage);
         }
-        logger.info(`🎉 Welcome message sent successfully for thread ${instagramThreadId}`);
-    } catch (error) {
-        const errorMessage = error.response?.body?.description || error.message;
-        logger.error(`❌ Failed to send welcome message for thread ${instagramThreadId}:`, errorMessage);
-    }}
+    }
+
     async sendProfilePictureWithUrl(topicId, instagramThreadId, profilePicUrl, isUpdate = false) {
         try {
             if (!config.telegram?.features?.profilePicSync) {
@@ -370,7 +337,6 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
                 message_thread_id: topicId,
                 caption: caption
             });
-            // Always update DB and cache to ensure consistency
             await this.updateProfilePicUrl(instagramThreadId, profilePicUrl);
             this.profilePicCache.set(instagramThreadId, profilePicUrl);
             logger.info(`📸 ✅ Sent ${isUpdate ? 'updated' : 'initial'} profile picture for thread ${instagramThreadId}`);
@@ -380,12 +346,10 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
     }
 
     async verifyTopicExists(topicId) {
-        // Simple cache to avoid too many API calls
         if (this.topicVerificationCache.has(topicId)) {
             return this.topicVerificationCache.get(topicId);
         }
         try {
-            // getChat can be used to check if a topic exists
             await this.telegramBot.getChat(`${this.telegramChatId}/${topicId}`);
             this.topicVerificationCache.set(topicId, true);
             return true;
@@ -394,14 +358,12 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
                 this.topicVerificationCache.set(topicId, false);
                 return false;
             }
-            // Other errors might be temporary, don't cache
             logger.debug(`⚠️ Error verifying topic ${topicId}:`, error.message);
-            return true; // Assume it exists if unsure
+            return true;
         }
     }
 
-    // --- Message Forwarding Logic ---
-
+    // Instagram -> Telegram message forwarding
     async sendToTelegram(message) {
         if (!this.telegramBot || !this.enabled) return;
 
@@ -413,12 +375,11 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
             if (!this.userMappings.has(senderUserId.toString())) {
                  await this.saveUserMapping(senderUserId.toString(), {
                     username: message.senderUsername,
-                    fullName: null, // Could potentially fetch this
+                    fullName: null,
                     firstSeen: new Date(),
                     messageCount: 0
                 });
             } else {
-                // Update message count
                 const userData = this.userMappings.get(senderUserId.toString());
                 userData.messageCount = (userData.messageCount || 0) + 1;
                 userData.lastSeen = new Date();
@@ -431,59 +392,230 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
                 return;
             }
 
-            // Check filters (basic example)
+            // Check filters
             const textLower = (message.text || '').toLowerCase().trim();
             for (const word of this.filters) {
                 if (textLower.startsWith(word)) {
                     logger.info(`🛑 Blocked Instagram ➝ Telegram message due to filter "${word}": ${message.text}`);
-                    return; // Silently drop
+                    return;
                 }
             }
 
-            // Handle different message types
-            if (message.type === 'text') {
-                let messageText = message.text || '';
-                // Add sender info if needed (e.g., group context if available later)
-                // For now, assume DM context
-
-                await this.sendSimpleMessage(topicId, messageText, instagramThreadId);
-            } else if (['media', 'photo', 'video', 'clip'].includes(message.type)) {
-                 // Handle media sent via Instagram API methods (broadcastPhoto, etc.)
-                 // This requires the raw message data to contain media info
-                 // This part is tricky without knowing the exact structure from ig_mqtt
-                 // We'll handle it in the handler for now, assuming it comes through
-                 // a different path or needs specific handling based on message.raw
-                 logger.warn(`⚠️ Media type '${message.type}' received, handling needs specific raw data access.`);
-                 // Placeholder for media handling logic if raw data is accessible
-                 await this.handleInstagramMedia(message, topicId);
-
-            } else {
-                 // Handle other types or fallback to text representation
-                 let fallbackText = `[Unsupported Message Type: ${message.type}]`;
-                 if (message.text) {
-                    fallbackText += `\n${message.text}`;
-                 }
-                 await this.sendSimpleMessage(topicId, fallbackText, instagramThreadId);
-            }
+            // Handle different message types based on raw Instagram data
+            await this.handleInstagramMessage(message, topicId);
 
         } catch (error) {
             logger.error('❌ Error forwarding message to Telegram:', error.message);
         }
     }
 
+    async handleInstagramMessage(message, topicId) {
+        try {
+            const rawMessage = message.raw;
+            
+            // Handle text messages
+            if (message.type === 'text' || rawMessage.item_type === 'text') {
+                await this.sendSimpleMessage(topicId, message.text || '', message.threadId);
+                return;
+            }
+
+            // Handle link messages
+            if (rawMessage.item_type === 'link') {
+                const linkText = rawMessage.link?.text || message.text || '';
+                const linkUrl = rawMessage.link?.link_context?.link_url || '';
+                const messageText = linkUrl ? `${linkText}\n🔗 ${linkUrl}` : linkText;
+                await this.sendSimpleMessage(topicId, messageText, message.threadId);
+                return;
+            }
+
+            // Handle media messages (photos)
+            if (rawMessage.item_type === 'media' && rawMessage.media) {
+                const media = rawMessage.media;
+                let mediaUrl = null;
+                
+                // Get the best quality image
+                if (media.image_versions2?.candidates?.length > 0) {
+                    mediaUrl = media.image_versions2.candidates[0].url;
+                } else if (media.carousel_media?.length > 0) {
+                    // Handle carousel (multiple images)
+                    for (const carouselItem of media.carousel_media) {
+                        if (carouselItem.image_versions2?.candidates?.length > 0) {
+                            const itemUrl = carouselItem.image_versions2.candidates[0].url;
+                            await this.sendInstagramPhoto(topicId, itemUrl, message.text || '');
+                        }
+                    }
+                    return;
+                }
+
+                if (mediaUrl) {
+                    await this.sendInstagramPhoto(topicId, mediaUrl, message.text || '');
+                }
+                return;
+            }
+
+            // Handle video messages
+            if (rawMessage.item_type === 'media' && rawMessage.media?.video_versions?.length > 0) {
+                const videoUrl = rawMessage.media.video_versions[0].url;
+                await this.sendInstagramVideo(topicId, videoUrl, message.text || '');
+                return;
+            }
+
+            // Handle voice messages
+            if (rawMessage.item_type === 'voice_media' && rawMessage.voice_media?.media?.audio) {
+                const voiceUrl = rawMessage.voice_media.media.audio.audio_src;
+                const duration = rawMessage.voice_media.media.audio.duration || 0;
+                await this.sendInstagramVoice(topicId, voiceUrl, duration);
+                return;
+            }
+
+            // Handle animated media (GIFs/stickers)
+            if (rawMessage.item_type === 'animated_media' && rawMessage.animated_media) {
+                const animatedMedia = rawMessage.animated_media;
+                let mediaUrl = null;
+                
+                if (animatedMedia.images?.fixed_height?.url) {
+                    mediaUrl = animatedMedia.images.fixed_height.url;
+                } else if (animatedMedia.images?.fixed_width?.url) {
+                    mediaUrl = animatedMedia.images.fixed_width.url;
+                }
+
+                if (mediaUrl) {
+                    if (animatedMedia.is_sticker) {
+                        await this.sendInstagramSticker(topicId, mediaUrl);
+                    } else {
+                        await this.sendInstagramAnimation(topicId, mediaUrl);
+                    }
+                }
+                return;
+            }
+
+            // Handle story shares
+            if (rawMessage.item_type === 'story_share' && rawMessage.story_share) {
+                const storyShare = rawMessage.story_share;
+                let storyText = storyShare.message || 'Shared a story';
+                
+                if (storyShare.media?.image_versions2?.candidates?.length > 0) {
+                    const storyImageUrl = storyShare.media.image_versions2.candidates[0].url;
+                    await this.sendInstagramPhoto(topicId, storyImageUrl, `📖 Story: ${storyText}`);
+                } else {
+                    await this.sendSimpleMessage(topicId, `📖 Story: ${storyText}`, message.threadId);
+                }
+                return;
+            }
+
+            // Handle likes
+            if (rawMessage.item_type === 'like') {
+                await this.sendSimpleMessage(topicId, '❤️ Liked your message', message.threadId);
+                return;
+            }
+
+            // Handle reel shares
+            if (rawMessage.item_type === 'reel_share' && rawMessage.reel_share) {
+                const reelShare = rawMessage.reel_share;
+                const reelText = reelShare.text || 'Shared a reel';
+                
+                if (reelShare.media?.video_versions?.length > 0) {
+                    const reelVideoUrl = reelShare.media.video_versions[0].url;
+                    await this.sendInstagramVideo(topicId, reelVideoUrl, `🎬 Reel: ${reelText}`);
+                } else if (reelShare.media?.image_versions2?.candidates?.length > 0) {
+                    const reelImageUrl = reelShare.media.image_versions2.candidates[0].url;
+                    await this.sendInstagramPhoto(topicId, reelImageUrl, `🎬 Reel: ${reelText}`);
+                } else {
+                    await this.sendSimpleMessage(topicId, `🎬 Reel: ${reelText}`, message.threadId);
+                }
+                return;
+            }
+
+            // Fallback for unknown message types
+            const fallbackText = `[${message.type || rawMessage.item_type || 'Unknown'}] ${message.text || 'Unsupported message type'}`;
+            await this.sendSimpleMessage(topicId, fallbackText, message.threadId);
+
+        } catch (error) {
+            logger.error('❌ Error handling Instagram message:', error.message);
+            await this.sendSimpleMessage(topicId, `[Error processing message: ${message.type}]`, message.threadId);
+        }
+    }
+
+    async sendInstagramPhoto(topicId, photoUrl, caption = '') {
+        try {
+            await this.telegramBot.sendPhoto(this.telegramChatId, photoUrl, {
+                message_thread_id: topicId,
+                caption: caption || undefined
+            });
+            logger.debug(`📷 Sent Instagram photo to topic ${topicId}`);
+        } catch (error) {
+            logger.error(`❌ Failed to send Instagram photo:`, error.message);
+            await this.sendSimpleMessage(topicId, `📷 [Photo] ${caption}`, null);
+        }
+    }
+
+    async sendInstagramVideo(topicId, videoUrl, caption = '') {
+        try {
+            await this.telegramBot.sendVideo(this.telegramChatId, videoUrl, {
+                message_thread_id: topicId,
+                caption: caption || undefined
+            });
+            logger.debug(`🎥 Sent Instagram video to topic ${topicId}`);
+        } catch (error) {
+            logger.error(`❌ Failed to send Instagram video:`, error.message);
+            await this.sendSimpleMessage(topicId, `🎥 [Video] ${caption}`, null);
+        }
+    }
+
+    async sendInstagramVoice(topicId, voiceUrl, duration = 0) {
+        try {
+            // Download voice file and send as voice message
+            const response = await axios.get(voiceUrl, { responseType: 'arraybuffer' });
+            const buffer = Buffer.from(response.data);
+            
+            await this.telegramBot.sendVoice(this.telegramChatId, buffer, {
+                message_thread_id: topicId,
+                duration: duration
+            });
+            logger.debug(`🎤 Sent Instagram voice message to topic ${topicId}`);
+        } catch (error) {
+            logger.error(`❌ Failed to send Instagram voice:`, error.message);
+            await this.sendSimpleMessage(topicId, `🎤 [Voice Message]`, null);
+        }
+    }
+
+    async sendInstagramAnimation(topicId, animationUrl) {
+        try {
+            await this.telegramBot.sendAnimation(this.telegramChatId, animationUrl, {
+                message_thread_id: topicId
+            });
+            logger.debug(`🎬 Sent Instagram animation to topic ${topicId}`);
+        } catch (error) {
+            logger.error(`❌ Failed to send Instagram animation:`, error.message);
+            await this.sendSimpleMessage(topicId, `🎬 [Animation/GIF]`, null);
+        }
+    }
+
+    async sendInstagramSticker(topicId, stickerUrl) {
+        try {
+            // Try to send as sticker, fallback to photo
+            await this.telegramBot.sendPhoto(this.telegramChatId, stickerUrl, {
+                message_thread_id: topicId,
+                caption: '🎭 Sticker'
+            });
+            logger.debug(`🎭 Sent Instagram sticker to topic ${topicId}`);
+        } catch (error) {
+            logger.error(`❌ Failed to send Instagram sticker:`, error.message);
+            await this.sendSimpleMessage(topicId, `🎭 [Sticker]`, null);
+        }
+    }
+
     async sendSimpleMessage(topicId, text, instagramThreadId) {
         try {
-            // Check if topic still exists before sending
-            const exists = await this.verifyTopicExists(topicId);
-            if (!exists) {
-                logger.warn(`🗑️ Topic ${topicId} for Instagram thread ${instagramThreadId} seems deleted. Recreating...`);
-                // Trigger recreation logic
-                this.chatMappings.delete(instagramThreadId);
-                this.profilePicCache.delete(instagramThreadId);
-                await this.collection.deleteOne({ type: 'chat', 'data.instagramThreadId': instagramThreadId });
-                // The next message will trigger getOrCreateTopic again
-                // Don't send now, let it retry on next message
-                return null;
+            if (instagramThreadId) {
+                const exists = await this.verifyTopicExists(topicId);
+                if (!exists) {
+                    logger.warn(`🗑️ Topic ${topicId} for Instagram thread ${instagramThreadId} seems deleted. Recreating...`);
+                    this.chatMappings.delete(instagramThreadId);
+                    this.profilePicCache.delete(instagramThreadId);
+                    await this.collection.deleteOne({ type: 'chat', 'data.instagramThreadId': instagramThreadId });
+                    return null;
+                }
             }
 
             const sentMessage = await this.telegramBot.sendMessage(this.telegramChatId, text, {
@@ -493,11 +625,12 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
         } catch (error) {
             const desc = error.response?.body?.description || error.message;
             if (desc.includes('message thread not found') || desc.includes('Bad Request: group chat was deactivated')) {
-                logger.warn(`🗑️ Topic ID ${topicId} for Instagram thread ${instagramThreadId} is missing. Marking for recreation.`);
-                this.chatMappings.delete(instagramThreadId);
-                this.profilePicCache.delete(instagramThreadId);
-                await this.collection.deleteOne({ type: 'chat', 'data.instagramThreadId': instagramThreadId });
-                // Don't retry immediately, let next message handle it
+                if (instagramThreadId) {
+                    logger.warn(`🗑️ Topic ID ${topicId} for Instagram thread ${instagramThreadId} is missing. Marking for recreation.`);
+                    this.chatMappings.delete(instagramThreadId);
+                    this.profilePicCache.delete(instagramThreadId);
+                    await this.collection.deleteOne({ type: 'chat', 'data.instagramThreadId': instagramThreadId });
+                }
             } else {
                 logger.error('❌ Failed to send message to Telegram:', desc);
             }
@@ -505,39 +638,11 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
         }
     }
 
-    // Placeholder for media handling - needs integration with Instagram's media download methods
-    async handleInstagramMedia(message, topicId) {
-         // This is complex because it requires downloading media from Instagram
-         // using the `instagram-private-api` methods and then sending to Telegram.
-         // The `message` object needs to contain enough raw data or references
-         // to do this. Implementation depends heavily on how media messages
-         // are structured in the `processedMessage` passed from your InstagramBot.
-         logger.warn("Instagram media handling not fully implemented in bridge. Requires raw media data access.");
-         // Example pseudo-code structure:
-         /*
-         try {
-            // 1. Identify media type from message.raw
-            // 2. Use ig.client or message context to download media buffer/stream
-            //    e.g., const stream = await this.instagramBot.ig.feed.mediaDownload(message.raw.mediaId).stream();
-            // 3. Save buffer to temp file
-            // 4. Determine Telegram method (sendPhoto, sendVideo, etc.)
-            // 5. Send using this.telegramBot.send[Type](chatId, buffer/file, { message_thread_id: topicId, caption: ... });
-            // 6. Clean up temp file
-         } catch (err) {
-             logger.error("❌ Error handling Instagram media:", err.message);
-             await this.sendSimpleMessage(topicId, `[Media: ${message.type}] ${message.text || 'No caption'}`, message.threadId);
-         }
-         */
-    }
-
-
-    // --- Telegram -> Instagram ---
-
+    // Telegram -> Instagram handlers
     async setupTelegramHandlers() {
         if (!this.telegramBot) return;
 
         this.telegramBot.on('message', this.wrapHandler(async (msg) => {
-            // Handle Telegram messages destined for Instagram
             if (
                 (msg.chat.type === 'supergroup' || msg.chat.type === 'group') &&
                 msg.is_topic_message &&
@@ -545,11 +650,8 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
             ) {
                 await this.handleTelegramMessage(msg);
             } else if (msg.chat.type === 'private') {
-                 // Handle direct commands to the bot if needed
                  logger.info(`📩 Received private message from Telegram user ${msg.from.id}: ${msg.text}`);
-                 // Add command logic here if desired
             }
-            // Ignore other message types/groups
         }));
 
         this.telegramBot.on('polling_error', (error) => {
@@ -580,16 +682,11 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
 
             if (!instagramThreadId) {
                 logger.warn('⚠️ Could not find Instagram thread for Telegram message');
-                await this.setReaction(msg.chat.id, msg.message_id, '❓'); // Question mark for unknown thread
+                await this.setReaction(msg.chat.id, msg.message_id, '❓');
                 return;
             }
 
-            // Send typing indicator to Instagram
-            // Note: instagram-private-api might not have a direct 'typing' indicator for DMs
-            // You might need to simulate it or use presence updates if available
-            // await this.instagramBot.ig.realtime.direct.sendForegroundState({ ... });
-
-            // --- Filter Check ---
+            // Filter check
             const originalText = msg.text?.trim() || '';
             const textLower = originalText.toLowerCase();
             for (const word of this.filters) {
@@ -599,13 +696,12 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
                     return;
                 }
             }
-            // --- End Filter Check ---
 
+            // Handle different message types
             if (msg.text) {
                 const sendResult = await this.instagramBot.sendMessage(instagramThreadId, originalText);
-                if (sendResult) { // Assuming sendMessage returns truthy on success
+                if (sendResult) {
                     await this.setReaction(msg.chat.id, msg.message_id, '👍');
-                    // Mark as read on Instagram side? (Usually automatic)
                 } else {
                     throw new Error('Instagram send failed');
                 }
@@ -617,10 +713,15 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
                 await this.handleTelegramMedia(msg, 'document', instagramThreadId);
             } else if (msg.voice) {
                 await this.handleTelegramMedia(msg, 'voice', instagramThreadId);
+            } else if (msg.video_note) {
+                await this.handleTelegramMedia(msg, 'video_note', instagramThreadId);
+            } else if (msg.audio) {
+                await this.handleTelegramMedia(msg, 'audio', instagramThreadId);
             } else if (msg.sticker) {
                 await this.handleTelegramMedia(msg, 'sticker', instagramThreadId);
+            } else if (msg.animation) {
+                await this.handleTelegramMedia(msg, 'animation', instagramThreadId);
             } else {
-                // Handle other media types or fallback
                 logger.warn(`⚠️ Unsupported Telegram media type received in topic ${topicId}`);
                 const fallbackText = "[Unsupported Telegram Media Received]";
                 const sendResult = await this.instagramBot.sendMessage(instagramThreadId, fallbackText);
@@ -631,9 +732,6 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
                 }
             }
 
-            // Send 'available' presence or stop typing indicator if used
-            // await this.instagramBot.ig.realtime.direct.sendForegroundState({ inForegroundApp: true, inForegroundDevice: true, keepAliveTimeout: 900 });
-
         } catch (error) {
             logger.error('❌ Failed to handle Telegram message:', error.message);
             await this.setReaction(msg.chat.id, msg.message_id, '❌');
@@ -642,18 +740,22 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
 
     async handleTelegramMedia(msg, mediaType, instagramThreadId) {
         try {
-            await this.setReaction(msg.chat.id, msg.message_id, '🔄'); // Indicate processing
+            await this.setReaction(msg.chat.id, msg.message_id, '🔄');
 
             let fileId, fileName, caption = msg.caption || '';
 
             switch (mediaType) {
                 case 'photo':
-                    fileId = msg.photo[msg.photo.length - 1].file_id; // Get largest photo
+                    fileId = msg.photo[msg.photo.length - 1].file_id;
                     fileName = `photo_${Date.now()}.jpg`;
                     break;
                 case 'video':
                     fileId = msg.video.file_id;
                     fileName = `video_${Date.now()}.mp4`;
+                    break;
+                case 'video_note':
+                    fileId = msg.video_note.file_id;
+                    fileName = `video_note_${Date.now()}.mp4`;
                     break;
                 case 'document':
                     fileId = msg.document.file_id;
@@ -663,12 +765,20 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
                     fileId = msg.voice.file_id;
                     fileName = `voice_${Date.now()}.ogg`;
                     break;
+                case 'audio':
+                    fileId = msg.audio.file_id;
+                    fileName = `audio_${Date.now()}.mp3`;
+                    break;
                 case 'sticker':
                     fileId = msg.sticker.file_id;
                     fileName = `sticker_${Date.now()}.webp`;
                     break;
+                case 'animation':
+                    fileId = msg.animation.file_id;
+                    fileName = `animation_${Date.now()}.gif`;
+                    break;
                 default:
-                    throw new Error(`Unsupported media type for sending to Instagram: ${mediaType}`);
+                    throw new Error(`Unsupported media type: ${mediaType}`);
             }
 
             logger.info(`📥 Downloading ${mediaType} from Telegram: ${fileName}`);
@@ -676,61 +786,48 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
             const response = await axios.get(fileLink, { responseType: 'arraybuffer' });
             const buffer = Buffer.from(response.data);
 
-            // --- Send to Instagram using instagram-private-api ---
+            // Save to temp file
+            const tempFilePath = path.join(this.tempDir, fileName);
+            await fs.writeFile(tempFilePath, buffer);
+
             let sendResult;
             switch (mediaType) {
                 case 'photo':
-                    // Requires a square-ish image, might need processing
-                    sendResult = await this.instagramBot.ig.entity.directThread(instagramThreadId).broadcastPhoto({
-                        file: buffer
-                        // caption: caption // Check if caption is supported directly
-                    });
-                    if (caption) {
-                         // Send caption as a separate message if needed
-                         await this.instagramBot.sendMessage(instagramThreadId, caption);
-                    }
+                    sendResult = await this.instagramBot.sendPhoto(instagramThreadId, tempFilePath, caption);
                     break;
                 case 'video':
-                     // Video requirements are strict (duration, dimensions, codec)
-                     sendResult = await this.instagramBot.ig.entity.directThread(instagramThreadId).broadcastVideo({
-                        video: buffer
-                        // caption: caption
-                     });
-                     if (caption) {
-                         await this.instagramBot.sendMessage(instagramThreadId, caption);
-                     }
-                    break;
-                case 'document':
-                    // Instagram treats documents as links/files. Might need to upload to a service first.
-                    // Or send as a text message with a link if it's a file link.
-                    // For now, send as text with file info.
-                    const fileInfo = `📎 Document: ${msg.document.file_name || 'Unnamed File'} (${(msg.document.file_size / 1024).toFixed(2)} KB)`;
-                    sendResult = await this.instagramBot.sendMessage(instagramThreadId, `${fileInfo}\n${caption}`);
+                case 'video_note':
+                    sendResult = await this.instagramBot.sendVideo(instagramThreadId, tempFilePath, caption);
                     break;
                 case 'voice':
-                     // Instagram might treat OGG as audio. Check format compatibility.
-                     sendResult = await this.instagramBot.ig.entity.directThread(instagramThreadId).broadcastVoice({
-                        file: buffer
-                        // waveform: ... // Optional, complex to generate
-                     });
+                case 'audio':
+                    // Instagram doesn't support audio files directly, convert to voice or send as text
+                    const audioInfo = `🎵 Audio: ${msg.audio?.title || 'Audio File'} ${caption ? `\n${caption}` : ''}`;
+                    sendResult = await this.instagramBot.sendMessage(instagramThreadId, audioInfo);
+                    break;
+                case 'document':
+                    // Send document info as text since Instagram doesn't support file uploads in DMs
+                    const docInfo = `📎 Document: ${msg.document.file_name || 'File'} (${(msg.document.file_size / 1024).toFixed(2)} KB)${caption ? `\n${caption}` : ''}`;
+                    sendResult = await this.instagramBot.sendMessage(instagramThreadId, docInfo);
                     break;
                 case 'sticker':
-                    // Sending stickers directly might not be supported or straightforward.
-                    // Convert to photo or send as document link.
-                    // For simplicity, send as photo (needs conversion .webp -> .png/jpg)
-                    // This requires `sharp` or similar library
-                    /*
-                    import sharp from 'sharp';
-                    const pngBuffer = await sharp(buffer).png().toBuffer();
-                    sendResult = await this.instagramBot.ig.entity.directThread(instagramThreadId).broadcastPhoto({
-                        file: pngBuffer
-                    });
-                    */
-                    logger.warn("Sticker sending to Instagram not implemented. Requires .webp conversion.");
-                    sendResult = await this.instagramBot.sendMessage(instagramThreadId, "[Sticker Received - Conversion Needed]");
+                case 'animation':
+                    // Try to send as photo for now
+                    try {
+                        sendResult = await this.instagramBot.sendPhoto(instagramThreadId, tempFilePath, caption || '🎭 Sticker');
+                    } catch (stickerError) {
+                        sendResult = await this.instagramBot.sendMessage(instagramThreadId, `🎭 Sticker${caption ? `: ${caption}` : ''}`);
+                    }
                     break;
                 default:
-                    throw new Error(`Send logic not implemented for media type: ${mediaType}`);
+                    throw new Error(`Send logic not implemented for: ${mediaType}`);
+            }
+
+            // Clean up temp file
+            try {
+                await fs.unlink(tempFilePath);
+            } catch (cleanupError) {
+                logger.debug('Could not clean up temp file:', cleanupError.message);
             }
 
             if (sendResult) {
@@ -745,12 +842,10 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
         }
     }
 
-
     async setReaction(chatId, messageId, emoji) {
         try {
             const token = config.telegram?.botToken;
             if (!token) return;
-            // Use Telegram's setMessageReaction API
             await axios.post(`https://api.telegram.org/bot${token}/setMessageReaction`, {
                 chat_id: chatId,
                 message_id: messageId,
@@ -758,7 +853,6 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
             });
         } catch (err) {
             logger.debug('❌ Failed to set reaction:', err?.response?.data?.description || err.message);
-            // Silent fail for reactions
         }
     }
 
@@ -771,30 +865,14 @@ async sendWelcomeMessage(topicId, instagramThreadId, senderUserId, initialProfil
         return null;
     }
 
-    // --- Instagram Event Listeners (Setup) ---
-
     setupInstagramHandlers() {
         if (!this.instagramBot || !this.instagramBot.ig) {
             logger.warn('⚠️ Instagram bot instance not linked, cannot set up Instagram handlers');
             return;
         }
 
-        // Listen for user updates (e.g., profile changes) to update topics/pics
-        // This might require listening to specific realtime events or polling
-        // The instagram_mqtt library might not expose all user update events directly
-        // This is a placeholder for potential future integration
-        /*
-        this.instagramBot.ig.realtime.on('userUpdate', async (data) => {
-             // Check if the user is in our mappings
-             // If so, update profile pic, name, etc.
-             logger.debug("Instagram user update event (not fully implemented):", data);
-        });
-        */
-
         logger.info('📱 Instagram event handlers set up for Telegram bridge');
     }
-
-    // --- Shutdown ---
 
     async shutdown() {
         logger.info('🛑 Shutting down Instagram-Telegram bridge...');
