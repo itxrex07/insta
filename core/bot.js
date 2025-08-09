@@ -743,7 +743,7 @@ export class InstagramBot extends EventEmitter {
       this.log('WARN', `⚠️ Error during disconnect: ${error.message}`);
     }
   }
-}
+
 
 async function main() {
   let bot;
